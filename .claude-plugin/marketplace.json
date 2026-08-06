@@ -87,7 +87,8 @@
       "skills": [
         "./skills/data/tao-convert-dataset-format",
         "./skills/data/tao-validate-dataset-format",
-        "./skills/data/tao-analyze-gaps-od-map"
+        "./skills/data/tao-analyze-gaps-od-map",
+        "./skills/data/tao-mine-od-images"
       ]
     }
   ]
