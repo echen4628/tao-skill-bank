@@ -1,0 +1,15 @@
+[
+  {
+    "id": "generate-from-frozen-inputs",
+    "question": "Identify the skill and outline its documented steps for generating a COCO-labeled synthetic OD defect dataset from completed AnomalyGenNext testcase inputs. Do not run commands, scripts, or web searches.",
+    "expected_skill": "tao-generate-od-defects",
+    "ground_truth": "The agent should select this skill, validate the frozen input hashes, run generation and pseudo-labeling, and enforce generated, blocked, image, annotation, bbox, and category reconciliation.",
+    "expected_behavior": [
+      "Select tao-generate-od-defects",
+      "Validate frozen inputs before GPU work",
+      "Describe generation, evaluation, selection, and pseudo-labeling",
+      "Preserve native categories and enforce output accounting"
+    ],
+    "expected_script": "scripts/generate_od_defects.sh"
+  }
+]

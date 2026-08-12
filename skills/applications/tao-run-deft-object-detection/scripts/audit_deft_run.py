@@ -104,6 +104,13 @@ EXTRA_ARTIFACT_FIELDS: dict[str, tuple[str, str]] = {
     "combined_manifest": ("--combined-manifest", "file"),
     # stage: post-merge consistency report
     "merge_validation_report": ("--merge-validation-report", "file"),
+    # optional AnomalyGenNext producer admitted during the iteration's stage boundary
+    "synthetic_validation_summary": ("--synthetic-validation-summary", "file"),
+    "synthetic_coco": ("--synthetic-coco", "file"),
+    "synthetic_odvg": ("--synthetic-odvg", "file"),
+    "synthetic_label_map": ("--synthetic-label-map", "file"),
+    "synthetic_images_dir": ("--synthetic-images-dir", "dir"),
+    "synthetic_staging_report": ("--synthetic-staging-report", "file"),
 }
 
 # init_deft_state.py pins the source pool in config; `prep` is the stage that
@@ -614,6 +621,81 @@ def audit(results_dir: Path) -> dict[str, Any]:
                         f"loop_log commits {phase}/{stage} but state.iterations.{phase}."
                         f"{field} ({flag}) was never recorded"
                     )
+
+    # When the run froze AnomalyGenNext as an enabled producer, a successful
+    # generic `stage` commit must prove the synthetic handoff too. Keeping these
+    # fields merely optional at the CLI lets mining-only runs remain unchanged;
+    # the frozen run config makes them mandatory for this particular run.
+    config = state.get("config")
+    config = config if isinstance(config, dict) else {}
+    if config.get("anomalygen_enabled") is True:
+        synthetic_fields = (
+            "synthetic_validation_summary",
+            "synthetic_coco",
+            "synthetic_odvg",
+            "synthetic_label_map",
+            "synthetic_images_dir",
+            "synthetic_staging_report",
+        )
+        for phase in sorted(iterations, key=_phase_sort_key):
+            if iter_number(phase) is None or "stage" not in ok_stages_by_phase.get(phase, []):
+                continue
+            info = iterations.get(phase)
+            if not isinstance(info, dict):
+                continue
+            missing = [field for field in synthetic_fields if not info.get(field)]
+            if missing:
+                errors.append(
+                    f"{phase}/stage completed with anomalygen_enabled=true but did not record "
+                    f"synthetic artifacts: {missing}"
+                )
+                continue
+            try:
+                generation = json.loads(
+                    Path(str(info["synthetic_validation_summary"])).read_text(encoding="utf-8")
+                )
+                admission = json.loads(
+                    Path(str(info["synthetic_staging_report"])).read_text(encoding="utf-8")
+                )
+            except (OSError, json.JSONDecodeError) as exc:
+                errors.append(f"{phase}/stage synthetic gate files are unreadable: {exc}")
+                continue
+            if generation.get("status") != "COMPLETE" or generation.get(
+                "training_pool_mutated"
+            ) is not False or generation.get("training_eligible") is not True:
+                errors.append(
+                    f"{phase}/stage generation summary must be COMPLETE, immutable, and "
+                    "explicitly training-eligible before admission"
+                )
+            if admission.get("status") != "COMPLETE" or admission.get(
+                "training_pool_mutated"
+            ) is not True:
+                errors.append(
+                    f"{phase}/stage synthetic staging report does not prove training admission"
+                )
+            if admission.get("training_eligible") is not True:
+                errors.append(
+                    f"{phase}/stage synthetic staging report does not preserve "
+                    "training_eligible=true"
+                )
+
+            if "train" in ok_stages_by_phase.get(phase, []):
+                train_spec = info.get("training_spec")
+                try:
+                    spec_text = Path(str(train_spec)).read_text(encoding="utf-8")
+                except OSError as exc:
+                    errors.append(f"{phase}/train spec is unreadable: {exc}")
+                else:
+                    expected = (
+                        str(info["synthetic_images_dir"]),
+                        str(info["synthetic_odvg"]),
+                        str(info["synthetic_label_map"]),
+                    )
+                    absent = [value for value in expected if value not in spec_text]
+                    if absent:
+                        errors.append(
+                            f"{phase}/train spec omits enabled synthetic source path(s): {absent}"
+                        )
 
     highest_iteration = max(
         (

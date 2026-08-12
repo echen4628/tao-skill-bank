@@ -1,0 +1,15 @@
+[
+  {
+    "id": "prepare-fn-driven-inputs",
+    "question": "Identify the skill and outline its documented steps for turning an OD box-gaps parquet into frozen AnomalyGenNext testcase inputs. Do not run commands, scripts, or web searches.",
+    "expected_skill": "tao-prepare-anomalygen-inputs",
+    "ground_truth": "The agent should select this skill, preserve box-level FN identity, invoke the separate image-embedding skill for both emitted specs, then perform pair-preserving retrieval, AMP, and manifest validation.",
+    "expected_behavior": [
+      "Select tao-prepare-anomalygen-inputs",
+      "Describe source preparation and the two emitted embedding specs",
+      "Keep embedding execution separate",
+      "Describe pair-preserving retrieval, AMP, and frozen SHA-256 validation"
+    ],
+    "expected_script": "scripts/prepare_anomalygen_inputs.py"
+  }
+]

@@ -174,6 +174,17 @@ Resolve everything you can before asking the user. Parameter precedence is stric
 
 13. **Spec sanity.** `train.checkpoint_interval` must be `<= train.num_epochs`. `update_train_spec.py` lowers it automatically when an explicit epoch override would violate this, but flag the adjustment in the Summary so it is not a surprise.
 
+14. **Optional AnomalyGenNext producer.** Disabled unless the user requests it.
+    When enabled, read `references/anomalygen-next.md` and resolve every item in
+    its preflight section: nested config template, installation/repository,
+    Cosmos3-Nano base checkpoint, GPU count, optional provenance `source_tag`,
+    explicit `training_eligible: true`, and detector target class. Validate
+    every stable path in the template, every dataset checkpoint/recipe pair,
+    and confirm that the target class is in the detector target set. The
+    per-iteration `gap_parquet` is the only value replaced later. An absent or
+    false training-eligibility decision is a hard stop for loop admission, not
+    an overrideable warning.
+
 **Required input — `max_iterations`.** No default. Ask if not supplied and do not proceed past Pre-Flight without it.
 
 ## Defaults
@@ -210,6 +221,7 @@ Print this and **STOP — wait for explicit approval.** This is the only user ga
 | Mining multiplier      | N (budget = iter1 weak count x N)              | user/default      |
 | AP50 thresholds        | {"car": 0.99, ...}                             | user/default      |
 | GPUs                   | N                                              | detected          |
+| AnomalyGenNext         | disabled / enabled: <target class>, N GPUs     | user/preflight    |
 | Resuming               | yes — iter N complete / no                     | disk              |
 
 ### Inputs
@@ -222,6 +234,8 @@ Print this and **STOP — wait for explicit approval.** This is the only user ga
 | KPI images                | <path>                                       |
 | KPI ground truth          | <path> (N label files)                       |
 | Class mapping             | <path>                                       |
+| AnomalyGen config         | disabled / <validated template path>         |
+| AnomalyGen install/base   | disabled / <repo> / <base checkpoint>        |
 
 ### Docker images
 | Env var         | Image              | Status     |
@@ -232,6 +246,8 @@ Print this and **STOP — wait for explicit approval.** This is the only user ga
 ### Per-iteration stages
 gap_analysis -> embed -> mine -> stage -> train -> inference -> kpi_analyze
 (baseline runs inference -> kpi_analyze only; no training)
+(when enabled, stage admits both mined ODVG and validated synthetic ODVG;
+train appends both to the cumulative source list)
 ```
 
 Remind the user to enable auto-mode (shift+tab) before approving — the post-gate loop is continuously side-effecting.
@@ -259,7 +275,12 @@ Perform the planned pulls and directory creation, then initialize state once:
   --class-mapping "$CLASS_MAPPING" \
   --ap50-thresholds-json "$AP50_THRESHOLDS_JSON" \
   --multiplier "$MULTIPLIER" \
-  --allocation-policy "$ALLOCATION_POLICY"
+  --allocation-policy "$ALLOCATION_POLICY" \
+  [--anomalygen-config-template "$ANOMALYGEN_CONFIG_TEMPLATE" \
+   --anomalygen-repo "$ANOMALYGEN_REPO" \
+   --anomalygen-base-checkpoint "$ANOMALYGEN_BASE_CHECKPOINT" \
+   --anomalygen-target-class "$ANOMALYGEN_TARGET_CLASS" \
+   --anomalygen-num-gpus "$ANOMALYGEN_NUM_GPUS"]
 
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/audit_deft_run.py \
   --results-dir "$RESULTS_DIR"

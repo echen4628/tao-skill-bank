@@ -80,6 +80,16 @@ Each iteration's `gap_analysis` consumes the **previous** phase's inference labe
 
    Staging writes `tmm_odvg.jsonl` (one line per mined image, `image_id` renumbered sequentially, `instances[].label` remapped through the labelmap) and `labelmap.json`. `stage_mined_odvg.py` **truncates** `tmm_odvg.jsonl` before writing — the reference implementation opened it in append mode, so re-running an iteration silently duplicated every entry. See `references/stage-mined-data.md`.
 
+   When `state.config.anomalygen_enabled=true`, continue inside this same
+   disk-backed stage: run the preparation and generation skills from
+   `references/anomalygen-next.md`, admit only output carrying the frozen
+   `training_eligible=true` decision through `stage_anomalygen_coco.py`, and
+   convert the staged COCO to ODVG.
+   Commit the synthetic validation summary, COCO, ODVG, label map, image
+   directory, and staging report as optional audited stage artifacts. A
+   generation-only directory is not a training source; this explicit admission
+   and commit are required.
+
 5. **[SKILL — `tao-train-grounding-dino`] `train`.**
    First append the new ODVG source to the train spec:
 
@@ -90,12 +100,24 @@ Each iteration's `gap_analysis` consumes the **previous** phase's inference labe
      --num-epochs "<epochs>" --learning-rate "<lr>" \
      --tmm-image-dir "${RESULTS_DIR}/iter${N}/tmm/images" \
      --tmm-odvg-file "${RESULTS_DIR}/iter${N}/tmm/annotations/tmm_odvg.jsonl" \
-     --tmm-label-map-file "${RESULTS_DIR}/iter${N}/tmm/annotations/labelmap.json"
+     --tmm-label-map-file "${RESULTS_DIR}/iter${N}/tmm/annotations/labelmap.json" \
+     [--synthetic-image-dir "${RESULTS_DIR}/iter${N}/synthetic/training/images" \
+      --synthetic-odvg-file "${RESULTS_DIR}/iter${N}/synthetic/training/annotations/synthetic_train_odvg.jsonl" \
+      --synthetic-label-map-file "${RESULTS_DIR}/iter${N}/synthetic/training/annotations/synthetic_train_odvg_labelmap.json"]
    ```
 
-   This copies the previous spec and **appends** one `{image_dir, json_file, label_map}` entry to the `dataset.train_data_sources` list, then sets `train.num_epochs` and `train.optim.lr`. Growth is by list-append; earlier sources are never removed.
+   This copies the previous spec and appends the mined
+   `{image_dir, json_file, label_map}` entry plus the synthetic entry when the
+   producer is enabled, then sets `train.num_epochs` and `train.optim.lr`.
+   Growth is by list-append; earlier sources are never removed. Thus iteration 2
+   trains on iteration 1 mined + synthetic data as well as both iteration 2
+   producers.
 
-   `train.pretrained_model_path` is deliberately left untouched, so every iteration fine-tunes the **base** checkpoint on the accumulated dataset rather than continuing from `iter{N-1}`'s weights. See `references/grounding-dino.md`. Then run `grounding_dino train -e <spec> results_dir=${RESULTS_DIR}/iter${N} train.num_gpus=<N>`.
+   `train.pretrained_model_path` is deliberately reset to the frozen **base**
+   checkpoint, so every iteration fine-tunes that base on the accumulated
+   dataset rather than continuing from `iter{N-1}`'s weights. See
+   `references/grounding-dino.md`. Then run `grounding_dino train -e <spec>
+   results_dir=${RESULTS_DIR}/iter${N} train.num_gpus=<N>`.
 
    Iteration N's committed checkpoint must be a newly emitted file under `${RESULTS_DIR}/iter${N}/train/`. A non-zero exit, or a run emitting no new checkpoint, is a hard stop — never evaluate a checkpoint written before the failure.
 
@@ -227,8 +249,17 @@ results/run_<YYYYMMDD_HHMMSS>/
     ├── tmm/
     │   ├── images/                    # staged mined images
     │   └── annotations/               # tmm_odvg.jsonl, labelmap.json
+    ├── synthetic/                     # only when anomalygen_enabled=true
+    │   ├── filtering.yaml             # per-iteration copy; gap_parquet patched
+    │   ├── inputs/                    # frozen phase-1 testcases + provenance
+    │   ├── generation/                # validated generated images + pseudo-labels
+    │   └── training/
+    │       ├── images/                # collision-proof staged synthetic images
+    │       ├── synthetic_train.json   # admitted, target-class-projected COCO
+    │       ├── staging_report.json    # source-tag admission + counts
+    │       └── annotations/           # converted ODVG + label map
     ├── mined_cumulative.parquet       # exclude set for the next iteration
-    ├── train_grounding_dino.yaml      # prev spec + one appended ODVG source
+    ├── train_grounding_dino.yaml      # prev spec + current mined/synthetic sources
     ├── train/                         # gdino_model_latest.pth, status.json
     ├── inference/labels/*.txt
     └── kpi/kpi_calc.csv

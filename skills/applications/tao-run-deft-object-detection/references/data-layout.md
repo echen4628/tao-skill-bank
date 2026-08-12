@@ -6,7 +6,7 @@ The loop trains on your detection data. It cannot fabricate or download any of t
 
 | Path | What it is |
 |---|---|
-| `specs/train_grounding_dino.yaml` | Grounding DINO train-spec template. `dataset.train_data_sources` must be a **list**; the loop appends one ODVG entry per iteration. Also the source of truth for backbone, image size, and `train.optim`. |
+| `specs/train_grounding_dino.yaml` | Grounding DINO train-spec template. `dataset.train_data_sources` must be a **list**; the loop appends mined ODVG and, when enabled, synthetic ODVG each iteration. Also the source of truth for backbone, image size, and `train.optim`. |
 | `checkpoints/zero_shot.pth` | Pretrained / zero-shot Grounding DINO checkpoint. The baseline scores this without training, so it is required. |
 | `specs/inference_gdino.yaml` | Inference spec template. Supplies `dataset.infer_data_sources` and `inference.conf_threshold`. |
 | `kpi/images/` | KPI evaluation images. Must not be referenced with a trailing slash — `kpi_analyze` derives its sequence name from the second-to-last path component. |

@@ -21,7 +21,7 @@ Refuses to overwrite an existing ``deft_state.json`` without ``--force``, which
 is the guard against clobbering a live run: state and log are the loop's only
 memory, and re-initializing over them strands every artifact already on disk.
 
-Stdlib only.
+Uses PyYAML only when the optional AnomalyGenNext producer is enabled.
 """
 
 from __future__ import annotations
@@ -184,6 +184,19 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Miner's internal candidate-pool growth seed. Not the loop iteration count.")
     parser.add_argument("--iou-threshold", type=float, default=0.5)
     parser.add_argument("--kpi-conf-threshold", type=float, default=0.3)
+
+    parser.add_argument("--anomalygen-config-template", default=None,
+                        help="Enable the per-iteration AnomalyGenNext producer with this "
+                             "stable nested-YAML template. gap_parquet is replaced per iteration.")
+    parser.add_argument("--anomalygen-repo", default=None,
+                        help="AnomalyGenNext checkout/shared installation. Required when enabled.")
+    parser.add_argument("--anomalygen-base-checkpoint", default=None,
+                        help="Cosmos3-Nano base checkpoint directory. Required when enabled.")
+    parser.add_argument("--anomalygen-target-class", default=None,
+                        help="Detector class assigned to staged synthetic annotations. Required "
+                             "when enabled and must be one of --target-classes.")
+    parser.add_argument("--anomalygen-num-gpus", type=int, default=None,
+                        help="GPUs used by AnomalyGenNext. Defaults to --num-gpus.")
 
     parser.add_argument("--force", action="store_true",
                         help="Reinitialize over an existing run. The current state and a non-empty "
@@ -354,6 +367,119 @@ def main() -> int:
         kpi_images_dir = _abs(args.kpi_images_dir)
         ground_truth_labels_dir = _abs(args.ground_truth_labels_dir)
         class_mapping = _abs(args.class_mapping)
+
+        # AnomalyGenNext is an optional producer inside each iteration's `stage`
+        # boundary. Enablement is all-or-nothing so a resumed run cannot discover
+        # halfway through that only part of its synthetic-data contract was frozen.
+        anomaly_raw = {
+            "--anomalygen-config-template": args.anomalygen_config_template,
+            "--anomalygen-repo": args.anomalygen_repo,
+            "--anomalygen-base-checkpoint": args.anomalygen_base_checkpoint,
+            "--anomalygen-target-class": args.anomalygen_target_class,
+        }
+        anomalygen_enabled = any(anomaly_raw.values())
+        anomalygen_config_template = None
+        anomalygen_repo = None
+        anomalygen_base_checkpoint = None
+        anomalygen_target_class = None
+        anomalygen_num_gpus = args.anomalygen_num_gpus or args.num_gpus
+        if args.anomalygen_num_gpus is not None and not anomalygen_enabled:
+            errors.append("--anomalygen-num-gpus requires the AnomalyGenNext producer flags")
+        if anomalygen_enabled:
+            missing_anomaly = sorted(flag for flag, value in anomaly_raw.items() if not value)
+            if missing_anomaly:
+                errors.append(
+                    "AnomalyGenNext enablement is incomplete; missing " + ", ".join(missing_anomaly)
+                )
+            else:
+                anomalygen_config_template = _abs(args.anomalygen_config_template)
+                anomalygen_repo = _abs(args.anomalygen_repo)
+                anomalygen_base_checkpoint = _abs(args.anomalygen_base_checkpoint)
+                anomalygen_target_class = str(args.anomalygen_target_class).strip()
+                for flag, path, kind in (
+                    ("--anomalygen-config-template", anomalygen_config_template, "file"),
+                    ("--anomalygen-repo", anomalygen_repo, "dir"),
+                    ("--anomalygen-base-checkpoint", anomalygen_base_checkpoint, "dir"),
+                ):
+                    if problem := check_artifact(str(path), kind):
+                        errors.append(f"{flag}: {problem}")
+                if anomalygen_target_class not in target_classes:
+                    errors.append(
+                        f"--anomalygen-target-class {anomalygen_target_class!r} is not in "
+                        f"target classes {target_classes}"
+                    )
+                if anomalygen_num_gpus < 1 or anomalygen_num_gpus > args.num_gpus:
+                    errors.append(
+                        f"--anomalygen-num-gpus must be within [1, {args.num_gpus}], "
+                        f"got {anomalygen_num_gpus}"
+                    )
+                if anomalygen_config_template.is_file():
+                    try:
+                        import yaml
+
+                        anomaly_config = yaml.safe_load(
+                            anomalygen_config_template.read_text(encoding="utf-8")
+                        ) or {}
+                    except ImportError as exc:
+                        errors.append(
+                            "AnomalyGenNext config validation requires PyYAML; run "
+                            "init_deft_state.py through scripts/deft_python.sh"
+                        )
+                        anomaly_config = {}
+                    except (OSError, yaml.YAMLError) as exc:
+                        errors.append(f"--anomalygen-config-template: unreadable YAML: {exc}")
+                    else:
+                        if not isinstance(anomaly_config, dict):
+                            errors.append("--anomalygen-config-template must contain a YAML mapping")
+                        elif not isinstance(
+                            anomaly_config.get("source_tag", "user_provided"), str
+                        ) or not str(
+                            anomaly_config.get("source_tag", "user_provided")
+                        ).strip():
+                            errors.append(
+                                "when provided, --anomalygen-config-template.source_tag must be "
+                                "a non-empty provenance label"
+                            )
+                        elif anomaly_config.get("training_eligible") is not True:
+                            errors.append(
+                                "AnomalyGenNext data can enter the training loop only when the "
+                                "frozen config sets training_eligible=true"
+                            )
+                        else:
+                            for key in ("split_root", "pool_dataset_root", "defect_spec"):
+                                raw = anomaly_config.get(key)
+                                if not raw:
+                                    errors.append(
+                                        f"--anomalygen-config-template is missing required key {key!r}"
+                                    )
+                                    continue
+                                path = _abs(str(raw))
+                                kind = "file" if key == "defect_spec" else "dir"
+                                if problem := check_artifact(str(path), kind):
+                                    errors.append(f"AnomalyGenNext {key}: {problem}")
+                            datasets = anomaly_config.get("datasets")
+                            if not isinstance(datasets, dict) or not datasets:
+                                errors.append(
+                                    "--anomalygen-config-template.datasets must be a non-empty mapping"
+                                )
+                            else:
+                                for dataset_id, dataset in datasets.items():
+                                    if not isinstance(dataset, dict):
+                                        errors.append(
+                                            f"AnomalyGenNext dataset {dataset_id!r} must be a mapping"
+                                        )
+                                        continue
+                                    for key in ("checkpoint", "recipe"):
+                                        raw = dataset.get(key)
+                                        if not raw:
+                                            errors.append(
+                                                f"AnomalyGenNext dataset {dataset_id!r} is missing {key}"
+                                            )
+                                            continue
+                                        if problem := check_artifact(str(_abs(str(raw))), "file"):
+                                            errors.append(
+                                                f"AnomalyGenNext dataset {dataset_id!r} {key}: {problem}"
+                                            )
 
         required = [
             ("--workspace", workspace, "dir"),
@@ -528,6 +654,16 @@ def main() -> int:
                 "candidate_expansion_factor": args.candidate_expansion_factor,
                 "iou_threshold": args.iou_threshold,
                 "kpi_conf_threshold": args.kpi_conf_threshold,
+                "anomalygen_enabled": anomalygen_enabled,
+                "anomalygen_config_template": (
+                    str(anomalygen_config_template) if anomalygen_config_template else None
+                ),
+                "anomalygen_repo": str(anomalygen_repo) if anomalygen_repo else None,
+                "anomalygen_base_checkpoint": (
+                    str(anomalygen_base_checkpoint) if anomalygen_base_checkpoint else None
+                ),
+                "anomalygen_target_class": anomalygen_target_class,
+                "anomalygen_num_gpus": anomalygen_num_gpus if anomalygen_enabled else None,
             },
             "current_iteration": 0,
             "iterations": {},

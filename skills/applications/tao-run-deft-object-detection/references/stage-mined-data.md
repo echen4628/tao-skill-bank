@@ -17,7 +17,7 @@ The reference pipeline performed these steps inside internal container images (`
   --report-json "${RESULTS_DIR}/iter${N}/tmm/staging_report.json"
 ```
 
-For each mined filepath it copies the image, looks up that image's ODVG record by **basename** under `--annotations-base-dir`, renumbers `image_id` sequentially from 0, remaps `instances[].label` through the labelmap, and appends the record to `tmm_odvg.jsonl`. It then writes `labelmap.json` — reusing the first `*labelmap.json` found under the annotations tree, or synthesizing one from the observed categories when none exists.
+For each mined filepath it copies the image, looks up that image's ODVG record by **basename** under `--annotations-base-dir`, renumbers `image_id` sequentially from 0, remaps `instances[].label` through the labelmap, and writes the record to a freshly truncated `tmm_odvg.jsonl`. It then writes `labelmap.json` — reusing the first `*labelmap.json` found under the annotations tree, or synthesizing one from the observed categories when none exists.
 
 Two deliberate differences from the reference implementation:
 
@@ -52,6 +52,20 @@ This is a hard-stop gate. Do not train on a source that fails validation.
 
 The output feeds the *next* iteration's miner as `exclude_path`, so the loop never re-mines an image it already added.
 
+## Step 4 — Optional synthetic producer
+
+If `deft_state.json::config.anomalygen_enabled` is true, read and execute
+`references/anomalygen-next.md` now, before committing `stage`. That overlay
+prepares from this iteration's `box_gaps.parquet`, generates defects, enforces
+the frozen training-eligibility decision, stages generated COCO, converts it to
+ODVG, and lists the additional audited commit flags.
+
+Resume from durable gates instead of regenerating completed work: validate and
+reuse a COMPLETE frozen phase-1 manifest; validate and reuse a COMPLETE
+generation summary whose input-manifest hash still matches; validate and reuse
+a COMPLETE staging report whose recorded files still exist. Never trust file
+presence alone, and never repair a frozen producer directory in place.
+
 ## Mining budget
 
 `desired_unique_count` is computed once and held constant across iterations, matching the reference pipeline:
@@ -75,5 +89,11 @@ Point `--weak-parquet` at **iteration 1's** weak-images parquet on every iterati
   --label-map "${RESULTS_DIR}/iter${N}/tmm/annotations/labelmap.json" \
   --staged-images-dir "${RESULTS_DIR}/iter${N}/tmm/images" \
   --exclude-parquet "${RESULTS_DIR}/iter${N}/mined_cumulative.parquet" \
+  [--synthetic-validation-summary "${RESULTS_DIR}/iter${N}/synthetic/generation/validation_summary.json" \
+   --synthetic-coco "${RESULTS_DIR}/iter${N}/synthetic/training/synthetic_train.json" \
+   --synthetic-odvg "${RESULTS_DIR}/iter${N}/synthetic/training/annotations/synthetic_train_odvg.jsonl" \
+   --synthetic-label-map "${RESULTS_DIR}/iter${N}/synthetic/training/annotations/synthetic_train_odvg_labelmap.json" \
+   --synthetic-images-dir "${RESULTS_DIR}/iter${N}/synthetic/training/images" \
+   --synthetic-staging-report "${RESULTS_DIR}/iter${N}/synthetic/training/staging_report.json"] \
   --summary "staged <N> images with annotations"
 ```

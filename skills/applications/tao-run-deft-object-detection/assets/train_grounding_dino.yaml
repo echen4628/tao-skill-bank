@@ -6,7 +6,7 @@
 # template is how the two silent traps below get reintroduced.
 #
 # `dataset.train_data_sources` is deliberately empty. update_train_spec.py appends
-# one mined ODVG source per iteration; the list grows while the weights do not,
+# mined ODVG and optional synthetic ODVG sources per iteration; the list grows while the weights do not,
 # because every iteration fine-tunes the BASE checkpoint rather than the previous
 # iteration's. See references/grounding-dino.md.
 

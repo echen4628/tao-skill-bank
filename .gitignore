@@ -12,7 +12,11 @@ __pycache__/
 # In-repo virtualenvs — never scan or commit
 .venv/
 .venv-tao/
+.venv-tao-control/
 
 # Local session state
 tao_session_state.db*
 tao_session.db*
+.codex_tmp/
+.tao
+reports/

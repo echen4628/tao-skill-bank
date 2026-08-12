@@ -6,9 +6,12 @@ description: >
   unique-neighbor mining against a source pool, ODVG dataset staging, and retraining — repeated for a
   fixed number of iterations. Also prepares the source pool the loop mines from, as a separate run:
   Co-DETR pseudo-labeling, folding to the target classes, KITTI→COCO→ODVG conversion, and embedding.
+  It can optionally run an FN-driven AnomalyGenNext producer inside each iteration, validate and
+  convert its synthetic COCO to ODVG, and append it beside mined data in the cumulative training pool.
   Use for prompts like "run the DEFT OD loop", "run smart data augmentation for grounding dino",
   "mine and retrain my detection model", "improve OD mAP with gap analysis and mining", "prep the
-  source pool", or "pseudo-label my unlabeled images for mining"; do not use for standalone TAO
+  source pool", "pseudo-label my unlabeled images for mining", "generate defects from OD false
+  negatives", or "run AnomalyGenNext for DEFT OD"; do not use for standalone TAO
   training, one-off inference, or gap analysis alone.
 license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit and one or more CUDA GPUs. Workflows declare additional requirements.
@@ -79,11 +82,11 @@ Do not use this skill for a single standalone TAO training run, one-off inferenc
 
 ## Scope: Grounding DINO + ODVG
 
-This loop targets **Grounding DINO** with **ODVG** training annotations (`tmm_odvg.jsonl` + `labelmap.json`), matching the reference pipeline. `dataset.train_data_sources` is a **list**; each iteration appends one new ODVG source rather than rewriting a combined CSV. DINO and RT-DETR (COCO) are not supported by this workflow — use the leaf skills directly for those.
+This loop targets **Grounding DINO** with **ODVG** training annotations (`tmm_odvg.jsonl` + `labelmap.json`), matching the reference pipeline. `dataset.train_data_sources` is a **list**; each iteration appends its mined ODVG source and, when enabled, its synthetic ODVG source rather than rewriting a combined CSV. DINO and RT-DETR (COCO) are not supported by this workflow — use the leaf skills directly for those.
 
 The loop does **not** train at baseline. It evaluates the supplied zero-shot / pretrained checkpoint as iteration 0 and only trains from iteration 1 onward, once mining has produced data to add.
 
-## Two Invocations: Prep, Then Loop
+## Separate Invocations
 
 The source pool is prepared by its own run, before the loop launches. They are separate
 because a pool is prepped once and then serves many loop runs — coupling them would re-label
@@ -93,10 +96,17 @@ and re-embed the same images on every launch.
 |---|---|---|
 | "Prep the source pool" | Co-DETR pseudo-labels raw pool images, folds to the target classes, converts KITTI→COCO→ODVG, verifies, embeds | `coco.json`, `odvg/`, `source_embeddings.parquet`, `pool_report.json` |
 | "Run the DEFT loop" | baseline → iterations | checkpoints, KPI, the mAP trend |
+| "Generate defects from OD false negatives" | standalone qualification run; prepares frozen inputs, generates and pseudo-labels without admitting data to training | native fine-grained COCO, binary OD projection, provenance, gallery |
+| "Run the DEFT loop with AnomalyGenNext" | runs mining plus the optional synthetic producer in every iteration and appends both validated ODVG sources | cumulative mined + synthetic training sources, checkpoints, KPI trend |
 
 Follow `references/prep-source-pool.md` for the first. The loop then takes those four paths as
 inputs; Pre-Flight validates them and `init_deft_state.py` pins them, so a run cannot reach
 `mine` with no corpus to search.
+
+Follow `references/anomalygen-next.md` for both modes. Standalone generation
+stays quarantined. Loop-integrated generation is enabled only in the DEFT
+preflight, frozen in `deft_state.json`, and admitted during each iteration's
+`stage` boundary.
 
 ## Launch Intake
 
@@ -125,6 +135,9 @@ Full detail in `references/pipeline-and-state.md`.
 3. **Baseline (iter_0) — no training.** Run `inference` with the supplied zero-shot / pretrained checkpoint, then `kpi_analyze`. Seed `train_grounding_dino.yaml` from the user's template for later iterations to extend.
 4. **Iterate.** For each iteration 1..`max_iterations`, run the seven stages in order:
    `gap_analysis` → `embed` → `mine` → `stage` → `train` → `inference` → `kpi_analyze`.
+   When AnomalyGenNext is enabled, `stage` has two producers: it stages mined
+   ODVG, then prepares/generates/validates/converts synthetic ODVG. `train`
+   appends both sources; later iterations inherit both.
    Each iteration's `gap_analysis` consumes the **previous** phase's inference labels. Between stages run the audit and follow its one-line disk-backed next action.
 5. **Stop** when `max_iterations` is reached or a hard-stop gate fires. mAP is reported, not gated — the loop does not early-exit on a metric target.
 6. **Render** `results/DEFT_Loop_Report.md` after each completed iteration and once more at loop end by spawning the `reporter` subagent (`agents/reporter.md`). Never render inline.
@@ -145,6 +158,7 @@ Each stage maps to one underlying skill or to bundled glue. **Read only the curr
 | `gap_analysis` | `references/tao-analyze-gaps-od-map.md` | `tao-skill-bank:tao-analyze-gaps-od-map` |
 | `embed` | `references/tao-generate-image-embeddings.md` | `tao-skill-bank:tao-generate-image-embeddings` |
 | `mine` | `references/tao-mine-od-images.md` | `tao-skill-bank:tao-mine-od-images` |
+| optional FN-driven synthetic producer (inside `stage`, or standalone quarantine) | `references/anomalygen-next.md` | `tao-prepare-anomalygen-inputs` + `tao-generate-image-embeddings` + `tao-generate-od-defects` |
 | `stage` | `references/stage-mined-data.md` | *(bundled glue — no leaf skill)* |
 | `train`, `inference` | `references/grounding-dino.md` | `tao-skill-bank:tao-train-grounding-dino` |
 | `kpi_analyze` | `references/tao-analyze-detection-kpi.md` | `tao-skill-bank:tao-analyze-detection-kpi` |
@@ -157,6 +171,7 @@ Each stage maps to one underlying skill or to bundled glue. **Read only the curr
 |---|---|
 | Data contract, ODVG layout, source pool, output tree | `references/data-layout.md` |
 | One-time source-pool prep (pseudo-label, remap, convert, embed) | `references/prep-source-pool.md` |
+| FN-driven AnomalyGenNext preparation and generation | `references/anomalygen-next.md` |
 | Pre-Flight checks, defaults, Summary template | `references/preflight.md` |
 | Pipeline stages, state schema, loop-end sequence | `references/pipeline-and-state.md` |
 | Bundled scripts, glue, reporter agent, stage table | `references/scripts-and-agents.md` |
@@ -167,4 +182,4 @@ Each stage maps to one underlying skill or to bundled glue. **Read only the curr
 
 Run the full Pre-Flight, print the Summary, then STOP at the one user gate. After approval, run the baseline and the seven-stage iteration pipeline.
 
-Hard-stop and never auto-retry on: any stage `status=error`; a missing or zero-row source-pool embedding parquet; a zero-row mining result when weak images were present; a missing ODVG annotation source; an image/annotation mismatch after staging; or a train exit that emits no new iteration checkpoint. The loop stops when `max_iterations` is reached or an unrecoverable gate fires. Each terminal path commits `loop_stop` through `commit_stage.py`, then follows the loop-end sequence in `references/pipeline-and-state.md`.
+Hard-stop and never auto-retry on: any stage `status=error`; a missing or zero-row source-pool embedding parquet; a zero-row mining result when weak images were present; a missing ODVG annotation source; an image/annotation mismatch after staging; enabled AnomalyGenNext output that is incomplete, not explicitly training-eligible, empty, or absent from the emitted train spec; or a train exit that emits no new iteration checkpoint. The loop stops when `max_iterations` is reached or an unrecoverable gate fires. Each terminal path commits `loop_stop` through `commit_stage.py`, then follows the loop-end sequence in `references/pipeline-and-state.md`.

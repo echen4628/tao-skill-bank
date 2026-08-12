@@ -2,11 +2,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Append a mined ODVG source to a Grounding DINO train spec.
+"""Append this iteration's ODVG producers to a Grounding DINO train spec.
 
 Copies the previous iteration's spec, appends one
 ``{image_dir, json_file, label_map}`` entry to the ``dataset.train_data_sources``
-list, and sets ``train.num_epochs`` and ``train.optim.lr``. Dataset growth is by
+list for mined data and, when supplied, a second entry for synthetic data. It
+then sets ``train.num_epochs`` and ``train.optim.lr``. Dataset growth is by
 list-append: earlier sources are never removed, so iteration N trains on every
 source accumulated so far.
 
@@ -125,6 +126,19 @@ def set_validation(spec: dict[str, Any], image_dir: str, json_file: str) -> None
     dataset["test_data_sources"] = dict(sources)
 
 
+def validate_source_paths(values: tuple[tuple[str, str], ...]) -> tuple[str, ...]:
+    """Resolve one complete ODVG source triplet and prove every path exists."""
+    resolved: list[str] = []
+    for flag, raw in values:
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            raise ValueError(f"{flag} must be absolute: {path}")
+        if not path.exists():
+            raise FileNotFoundError(f"{flag} does not exist: {path}")
+        resolved.append(str(path.resolve()))
+    return tuple(resolved)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--previous-spec", required=True, help="Train spec from the previous phase.")
@@ -132,6 +146,11 @@ def main() -> int:
     parser.add_argument("--tmm-image-dir", required=True)
     parser.add_argument("--tmm-odvg-file", required=True)
     parser.add_argument("--tmm-label-map-file", required=True)
+    parser.add_argument("--synthetic-image-dir", default=None,
+                        help="Optional staged AnomalyGenNext image directory. Must be supplied "
+                             "with --synthetic-odvg-file and --synthetic-label-map-file.")
+    parser.add_argument("--synthetic-odvg-file", default=None)
+    parser.add_argument("--synthetic-label-map-file", default=None)
     parser.add_argument("--pretrained-model-path", required=True,
                         help="Zero-shot checkpoint every iteration fine-tunes FROM — the "
                              "user's if they supplied one, otherwise the NGC download "
@@ -157,26 +176,50 @@ def main() -> int:
             raise FileNotFoundError(f"previous-spec does not exist: {previous}")
         spec = load_yaml(previous)
 
-        for flag, raw in (
-            ("--tmm-image-dir", args.tmm_image_dir),
-            ("--tmm-odvg-file", args.tmm_odvg_file),
-            ("--tmm-label-map-file", args.tmm_label_map_file),
-        ):
-            path = Path(raw).expanduser()
-            if not path.is_absolute():
-                raise ValueError(f"{flag} must be absolute: {path}")
-            if not path.exists():
-                raise FileNotFoundError(f"{flag} does not exist: {path}")
+        tmm_image_dir, tmm_odvg_file, tmm_label_map_file = validate_source_paths(
+            (
+                ("--tmm-image-dir", args.tmm_image_dir),
+                ("--tmm-odvg-file", args.tmm_odvg_file),
+                ("--tmm-label-map-file", args.tmm_label_map_file),
+            )
+        )
 
         count = append_source(
             spec,
-            str(Path(args.tmm_image_dir).expanduser().resolve()),
-            str(Path(args.tmm_odvg_file).expanduser().resolve()),
-            str(Path(args.tmm_label_map_file).expanduser().resolve()),
+            tmm_image_dir,
+            tmm_odvg_file,
+            tmm_label_map_file,
         )
 
+        synthetic_values = (
+            args.synthetic_image_dir,
+            args.synthetic_odvg_file,
+            args.synthetic_label_map_file,
+        )
+        if any(synthetic_values) and not all(synthetic_values):
+            raise ValueError(
+                "--synthetic-image-dir, --synthetic-odvg-file, and "
+                "--synthetic-label-map-file must be supplied together"
+            )
+        if all(synthetic_values):
+            synthetic_image_dir, synthetic_odvg_file, synthetic_label_map_file = (
+                validate_source_paths(
+                    (
+                        ("--synthetic-image-dir", args.synthetic_image_dir),
+                        ("--synthetic-odvg-file", args.synthetic_odvg_file),
+                        ("--synthetic-label-map-file", args.synthetic_label_map_file),
+                    )
+                )
+            )
+            count = append_source(
+                spec,
+                synthetic_image_dir,
+                synthetic_odvg_file,
+                synthetic_label_map_file,
+            )
+
         checkpoint = set_pretrained(spec, args.pretrained_model_path)
-        classes = set_max_labels(spec, Path(args.tmm_label_map_file).expanduser().resolve())
+        classes = set_max_labels(spec, Path(tmm_label_map_file))
 
         # Validation is mandatory for `grounding_dino train`, so refuse to emit a spec
         # that cannot train. The template ships val_data_sources unset precisely so this

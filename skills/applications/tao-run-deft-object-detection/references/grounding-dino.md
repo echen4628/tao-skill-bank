@@ -190,9 +190,12 @@ that cannot train, because each of these failed silently or expensively at least
 <skill_root>/scripts/deft_python.sh <skill_root>/scripts/update_train_spec.py \
   --previous-spec        "<template or assets/train_grounding_dino.yaml>" \
   --output-spec          "${RESULTS_DIR}/iter${N}/train_grounding_dino.yaml" \
-  --tmm-image-dir        "${RESULTS_DIR}/iter${N}/staged/images" \
-  --tmm-odvg-file        "${RESULTS_DIR}/iter${N}/staged/annotations/tmm_odvg.jsonl" \
-  --tmm-label-map-file   "${RESULTS_DIR}/iter${N}/staged/annotations/labelmap.json" \
+  --tmm-image-dir        "${RESULTS_DIR}/iter${N}/tmm/images" \
+  --tmm-odvg-file        "${RESULTS_DIR}/iter${N}/tmm/annotations/tmm_odvg.jsonl" \
+  --tmm-label-map-file   "${RESULTS_DIR}/iter${N}/tmm/annotations/labelmap.json" \
+  [--synthetic-image-dir      "${RESULTS_DIR}/iter${N}/synthetic/training/images" \
+   --synthetic-odvg-file      "${RESULTS_DIR}/iter${N}/synthetic/training/annotations/synthetic_train_odvg.jsonl" \
+   --synthetic-label-map-file "${RESULTS_DIR}/iter${N}/synthetic/training/annotations/synthetic_train_odvg_labelmap.json"] \
   --val-image-dir        "<pool images>" \
   --val-json-file        "${RESULTS_DIR}/val_coco.json" \
   --pretrained-model-path "<config.zero_shot_checkpoint>" \
@@ -234,11 +237,12 @@ training had already finished correctly in 14m20s:
 ### Every iteration fine-tunes the base checkpoint, not the previous one
 
 `train.pretrained_model_path` stays pointed at the **original base checkpoint** on every
-iteration. It is inherited from the spec template and `update_train_spec.py` never touches it.
+iteration. `update_train_spec.py` overwrites it with the checkpoint frozen in
+`config.zero_shot_checkpoint`, preventing a stale template path from winning.
 That is deliberate, and it is the single most surprising property of this loop:
 
-- What grows across iterations is the **dataset** (`dataset.train_data_sources` gains one
-  mined ODVG source per iteration), not the weights.
+- What grows across iterations is the **dataset** (`dataset.train_data_sources`
+  gains mined ODVG and, when enabled, synthetic ODVG per iteration), not the weights.
 - The previous iteration's checkpoint is used **only** for inference and the gap analysis
   that follows it — never as a training initialisation.
 
