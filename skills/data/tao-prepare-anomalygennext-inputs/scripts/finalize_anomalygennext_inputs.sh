@@ -7,10 +7,10 @@ set -Eeuo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: finalize_anomalygen_inputs.sh --config PATH --output-dir PATH [options]
+Usage: finalize_anomalygennext_inputs.sh --config PATH --output-dir PATH [options]
 
 Required:
-  --config PATH             Same filtering YAML used by prepare_anomalygen_sources.sh
+  --config PATH             Same filtering YAML used by prepare_anomalygennext_sources.sh
   --output-dir PATH         Prepared directory containing both embedding outputs
 
 Optional:
@@ -43,10 +43,10 @@ PIPELINE_CONFIG=${PIPELINE_CONFIG:?--config must be set}
 ANOMALYGEN_REPO=${ANOMALYGEN_REPO:?ANOMALYGEN_REPO or --anomalygen-repo must be set}
 ANOMALYGEN_ACTIVATE=${ANOMALYGEN_ACTIVATE:-$ANOMALYGEN_REPO/.venv/bin/activate}
 ANOMALYGEN_HF_CACHE=${ANOMALYGEN_HF_CACHE:-$RUN_ROOT/cache/hf_anomalygen}
-PIPELINE_PY=${PIPELINE_PY:-$SCRIPT_DIR/prepare_anomalygen_inputs.py}
+PIPELINE_PY=${PIPELINE_PY:-$SCRIPT_DIR/prepare_anomalygennext_inputs.py}
 
-test -f "$RUN_ROOT/phase1/filtering_config.yaml"
-cmp -s "$PIPELINE_CONFIG" "$RUN_ROOT/phase1/filtering_config.yaml" || {
+test -f "$RUN_ROOT/prepared_anomalygennext_inputs/filtering_config.yaml"
+cmp -s "$PIPELINE_CONFIG" "$RUN_ROOT/prepared_anomalygennext_inputs/filtering_config.yaml" || {
   echo "config does not match the prepared filtering snapshot" >&2
   exit 2
 }
@@ -74,7 +74,7 @@ write_status() {
 trap write_status EXIT
 
 "$ANOMALYGEN_PYTHON" "$PIPELINE_PY" build-knn-and-amp \
-  --config "$RUN_ROOT/phase1/filtering_config.yaml" --run-root "$RUN_ROOT" \
+  --config "$RUN_ROOT/prepared_anomalygennext_inputs/filtering_config.yaml" --run-root "$RUN_ROOT" \
   2>&1 | tee "$RUN_ROOT/logs/build_knn_and_amp.log"
 
 export HF_HOME="$ANOMALYGEN_HF_CACHE"
@@ -86,7 +86,8 @@ export HF_HOME="$ANOMALYGEN_HF_CACHE"
   2>&1 | tee "$RUN_ROOT/logs/amp.log"
 
 test -s "$RUN_ROOT/amp/testcase.jsonl"
-"$ANOMALYGEN_PYTHON" "$PIPELINE_PY" finalize-phase1 \
-  --config "$RUN_ROOT/phase1/filtering_config.yaml" --run-root "$RUN_ROOT" \
+"$ANOMALYGEN_PYTHON" "$PIPELINE_PY" finalize-inputs \
+  --config "$RUN_ROOT/prepared_anomalygennext_inputs/filtering_config.yaml" --run-root "$RUN_ROOT" \
   2>&1 | tee "$RUN_ROOT/logs/finalize_inputs.log"
-"$ANOMALYGEN_PYTHON" "$PIPELINE_PY" validate-phase1 --phase1-root "$RUN_ROOT"
+"$ANOMALYGEN_PYTHON" "$PIPELINE_PY" validate-prepared-inputs \
+  --prepared-inputs-root "$RUN_ROOT"

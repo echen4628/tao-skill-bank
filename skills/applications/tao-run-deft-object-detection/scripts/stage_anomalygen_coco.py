@@ -5,9 +5,9 @@
 """Stage validated AnomalyGenNext COCO for one DEFT OD training iteration.
 
 The generator deliberately leaves its output outside the training pool. This
-script is the explicit application boundary that admits an approved run into
-training: it checks the generation summary and its frozen training-eligibility
-decision, copies images into the iteration tree, assigns collision-proof
+script is the explicit application boundary that admits a validated run into
+training: it checks the immutable generation summary, copies images into the
+iteration tree, assigns collision-proof
 basenames, and projects every annotation onto the detector class approved
 during preflight.
 
@@ -47,11 +47,6 @@ def stage(args: argparse.Namespace) -> dict[str, Any]:
     if summary.get("training_pool_mutated") is not False:
         raise ValueError(
             "generation summary must still report training_pool_mutated=false before staging"
-        )
-    if summary.get("training_eligible") is not True:
-        raise ValueError(
-            "generated data is not approved for training; training_eligible must be "
-            "true in the frozen preparation config"
         )
     source_tag = str(summary.get("source_tag", ""))
     if not source_tag.strip():
@@ -118,7 +113,6 @@ def stage(args: argparse.Namespace) -> dict[str, Any]:
     report = {
         "status": "COMPLETE",
         "source_tag": source_tag,
-        "training_eligible": True,
         "target_class": target_class,
         "source_validation_summary": str(summary_path),
         "source_coco": str(source_coco),

@@ -1,7 +1,9 @@
 # AnomalyGenNext OD generation contract
 
-Read this before adapting the generator wrapper to a new AnomalyGenNext release
-or execution platform.
+Read this before adapting the inference wrapper to a new AnomalyGenNext release
+or execution platform. This contract supports inference only. It requires an
+existing AnomalyGenNext checkpoint already fine-tuned for the requested
+`TEXTURE+TYPE` values and a matching recipe.
 
 ## Native commands
 
@@ -19,10 +21,16 @@ metadata merging.
 
 ## Inputs and routing
 
-`phase1/phase2_plan.json` is the routing authority. Each row supplies the
-dataset id, testcase and provenance paths, checkpoint, matched recipe, real-data
-root, anomaly types, and requested row count. Dataset subsets filter these rows
-without editing the plan.
+`prepared_anomalygennext_inputs/anomalygen_next_generation_plan.json` is the
+routing authority. Each row supplies the dataset id, testcase and provenance
+paths, task-fine-tuned checkpoint, matched recipe, real-data root, anomaly
+types, and requested row count. Dataset subsets filter these rows without
+editing the plan.
+
+The required `defect_spec` is validated during preparation. In particular,
+every `spatial_dependency: text` entry must carry a non-empty
+`roi_prompt_defect_location`. Generation consumes the resulting frozen
+testcases and does not accept a separate prompt or defect-spec override.
 
 ## Accounting
 

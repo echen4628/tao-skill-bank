@@ -662,10 +662,10 @@ def audit(results_dir: Path) -> dict[str, Any]:
                 continue
             if generation.get("status") != "COMPLETE" or generation.get(
                 "training_pool_mutated"
-            ) is not False or generation.get("training_eligible") is not True:
+            ) is not False:
                 errors.append(
                     f"{phase}/stage generation summary must be COMPLETE, immutable, and "
-                    "explicitly training-eligible before admission"
+                    "outside the training pool before admission"
                 )
             if admission.get("status") != "COMPLETE" or admission.get(
                 "training_pool_mutated"
@@ -673,12 +673,6 @@ def audit(results_dir: Path) -> dict[str, Any]:
                 errors.append(
                     f"{phase}/stage synthetic staging report does not prove training admission"
                 )
-            if admission.get("training_eligible") is not True:
-                errors.append(
-                    f"{phase}/stage synthetic staging report does not preserve "
-                    "training_eligible=true"
-                )
-
             if "train" in ok_stages_by_phase.get(phase, []):
                 train_spec = info.get("training_spec")
                 try:

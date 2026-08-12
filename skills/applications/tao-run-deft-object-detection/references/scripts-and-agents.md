@@ -61,7 +61,7 @@ must be derived from the run's classes, never pinned.
 | `stage_mined_odvg.py` | `stage` | Copy mined images, look up ODVG records by basename, renumber `image_id`, remap labels, write `tmm_odvg.jsonl` + `labelmap.json`. **Truncates** the JSONL, so re-running is idempotent. |
 | `validate_odvg_images.py` | `stage` | Hard-fail when an ODVG record references a missing image, when there are no usable records, or when records are duplicated. `--prune` deletes orphan images. Stdlib only. |
 | `merge_exclude_parquet.py` | `stage` | Merge this iteration's mined set with the previous cumulative and de-duplicate. `--parquet-b` is optional so iteration 1 works. |
-| `stage_anomalygen_coco.py` | `stage` (optional) | Enforce the frozen `training_eligible` decision, stage generated images, and project validated AnomalyGenNext COCO onto the approved detector target class before COCO→ODVG conversion. |
+| `stage_anomalygen_coco.py` | `stage` (optional) | Stage complete validated AnomalyGenNext output and project its COCO onto the approved detector target class before COCO→ODVG conversion. |
 | `update_train_spec.py` | `train` | Copy the previous spec, append the mined `{image_dir, json_file, label_map}` entry and the optional synthetic entry to `dataset.train_data_sources`, then set `train.num_epochs` and `train.optim.lr`. Lowers `checkpoint_interval` / `validation_interval` when they exceed the epoch count, and will not double-add a source already present. |
 
 ### Script invocation

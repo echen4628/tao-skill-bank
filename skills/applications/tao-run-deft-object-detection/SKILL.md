@@ -96,7 +96,7 @@ and re-embed the same images on every launch.
 |---|---|---|
 | "Prep the source pool" | Co-DETR pseudo-labels raw pool images, folds to the target classes, converts KITTI→COCO→ODVG, verifies, embeds | `coco.json`, `odvg/`, `source_embeddings.parquet`, `pool_report.json` |
 | "Run the DEFT loop" | baseline → iterations | checkpoints, KPI, the mAP trend |
-| "Generate defects from OD false negatives" | standalone qualification run; prepares frozen inputs, generates and pseudo-labels without admitting data to training | native fine-grained COCO, binary OD projection, provenance, gallery |
+| "Generate defects from OD false negatives" | standalone inference run from an existing task-fine-tuned AnomalyGenNext checkpoint; prepares frozen inputs, generates, and pseudo-labels without admitting data to training | native fine-grained COCO, binary OD projection, provenance, gallery |
 | "Run the DEFT loop with AnomalyGenNext" | runs mining plus the optional synthetic producer in every iteration and appends both validated ODVG sources | cumulative mined + synthetic training sources, checkpoints, KPI trend |
 
 Follow `references/prep-source-pool.md` for the first. The loop then takes those four paths as
@@ -136,7 +136,8 @@ Full detail in `references/pipeline-and-state.md`.
 4. **Iterate.** For each iteration 1..`max_iterations`, run the seven stages in order:
    `gap_analysis` → `embed` → `mine` → `stage` → `train` → `inference` → `kpi_analyze`.
    When AnomalyGenNext is enabled, `stage` has two producers: it stages mined
-   ODVG, then prepares/generates/validates/converts synthetic ODVG. `train`
+   ODVG, then runs inference from an existing task-fine-tuned AnomalyGenNext
+   checkpoint and prepares/generates/validates/converts synthetic ODVG. `train`
    appends both sources; later iterations inherit both.
    Each iteration's `gap_analysis` consumes the **previous** phase's inference labels. Between stages run the audit and follow its one-line disk-backed next action.
 5. **Stop** when `max_iterations` is reached or a hard-stop gate fires. mAP is reported, not gated — the loop does not early-exit on a metric target.
@@ -158,7 +159,7 @@ Each stage maps to one underlying skill or to bundled glue. **Read only the curr
 | `gap_analysis` | `references/tao-analyze-gaps-od-map.md` | `tao-skill-bank:tao-analyze-gaps-od-map` |
 | `embed` | `references/tao-generate-image-embeddings.md` | `tao-skill-bank:tao-generate-image-embeddings` |
 | `mine` | `references/tao-mine-od-images.md` | `tao-skill-bank:tao-mine-od-images` |
-| optional FN-driven synthetic producer (inside `stage`, or standalone quarantine) | `references/anomalygen-next.md` | `tao-prepare-anomalygen-inputs` + `tao-generate-image-embeddings` + `tao-generate-od-defects` |
+| optional FN-driven synthetic producer (inside `stage`, or standalone quarantine) | `references/anomalygen-next.md` | `tao-prepare-anomalygennext-inputs` + `tao-generate-image-embeddings` + `tao-generate-od-defects` |
 | `stage` | `references/stage-mined-data.md` | *(bundled glue — no leaf skill)* |
 | `train`, `inference` | `references/grounding-dino.md` | `tao-skill-bank:tao-train-grounding-dino` |
 | `kpi_analyze` | `references/tao-analyze-detection-kpi.md` | `tao-skill-bank:tao-analyze-detection-kpi` |
@@ -182,4 +183,4 @@ Each stage maps to one underlying skill or to bundled glue. **Read only the curr
 
 Run the full Pre-Flight, print the Summary, then STOP at the one user gate. After approval, run the baseline and the seven-stage iteration pipeline.
 
-Hard-stop and never auto-retry on: any stage `status=error`; a missing or zero-row source-pool embedding parquet; a zero-row mining result when weak images were present; a missing ODVG annotation source; an image/annotation mismatch after staging; enabled AnomalyGenNext output that is incomplete, not explicitly training-eligible, empty, or absent from the emitted train spec; or a train exit that emits no new iteration checkpoint. The loop stops when `max_iterations` is reached or an unrecoverable gate fires. Each terminal path commits `loop_stop` through `commit_stage.py`, then follows the loop-end sequence in `references/pipeline-and-state.md`.
+Hard-stop and never auto-retry on: any stage `status=error`; a missing or zero-row source-pool embedding parquet; a zero-row mining result when weak images were present; a missing ODVG annotation source; an image/annotation mismatch after staging; enabled AnomalyGenNext output that is incomplete, empty, or absent from the emitted train spec; or a train exit that emits no new iteration checkpoint. The loop stops when `max_iterations` is reached or an unrecoverable gate fires. Each terminal path commits `loop_stop` through `commit_stage.py`, then follows the loop-end sequence in `references/pipeline-and-state.md`.

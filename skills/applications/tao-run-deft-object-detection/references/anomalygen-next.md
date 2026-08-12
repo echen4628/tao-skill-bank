@@ -6,16 +6,18 @@ contains no user, cluster, dataset, checkpoint, or run-specific paths.
 
 The data skills own the reusable producer work:
 
-- `tao-prepare-anomalygen-inputs` owns FN/type eligibility, masks,
+- `tao-prepare-anomalygennext-inputs` owns FN/type eligibility, prompts, masks,
   pair-preserving retrieval, AMP, frozen testcases, and provenance.
 - `tao-generate-image-embeddings` owns clean and FN embeddings.
 - `tao-generate-od-defects` owns generation, pseudo-labeling, COCO merging, and
   generation gates.
 
-This application owns the final admission boundary: only validated output with
-the frozen `training_eligible: true` decision is staged, converted to ODVG,
-committed with the iteration, and appended to the cumulative Grounding DINO
-training sources.
+The data skills currently support AnomalyGenNext inference only. DEFT needs
+only inference: every dataset route supplies a checkpoint already fine-tuned
+for its requested anomaly types plus the matching recipe. This application
+owns the final admission boundary: validated output is staged, converted to
+ODVG, committed with the iteration, and appended to the cumulative Grounding
+DINO training sources.
 
 ## Preflight — all values are required when enabled
 
@@ -27,13 +29,16 @@ Resolve and show these in the single launch review:
   `pool_dataset_root`, `defect_spec`, dataset routing, matched checkpoint/recipe
   pairs, selection policy, encoder, and retrieval settings. The loop replaces
   only `gap_parquet` per iteration.
+- For every dataset route, require an AnomalyGenNext checkpoint already
+  fine-tuned for the requested `TEXTURE+TYPE` values. Confirm that its recipe
+  declares those same types. DEFT never fine-tunes AnomalyGenNext.
+- `defect_spec` is required. Every selected type must have one entry; a
+  `spatial_dependency: text` entry must include a non-empty
+  `roi_prompt_defect_location`. Treat that as the authoritative placement
+  prompt. Do not infer or synthesize it from the OD false negative.
 - An optional non-empty `source_tag` as an opaque provenance label; it defaults
   to `user_provided`. The loop does not attach policy meaning to the label, so
   a fresh user does not need to classify a path with a special name.
-- `training_eligible: true`. This explicit preflight decision is required for
-  loop integration. Use `false` for any input that may be used for generation
-  or evaluation but must not be added to detector training. Do not infer this
-  decision from the path or `source_tag`.
 - `anomalygen_target_class`, which must be one of the detector's target classes.
   The current training admission deliberately projects all generated native
   anomaly types onto this one approved detector class. Do not infer it.
@@ -59,29 +64,28 @@ needs each FN box and mask identity.
      --set "gap_parquet=${RESULTS_DIR}/iter${N}/gaps/box_gaps.parquet"
    ```
 
-2. Invoke `tao-prepare-anomalygen-inputs` source preparation, embed its clean
+2. Invoke `tao-prepare-anomalygennext-inputs` source preparation, embed its clean
    and FN specs with the exact frozen encoder, then finalize the inputs.
    Inputs live under `${RESULTS_DIR}/iter${N}/synthetic/inputs/`.
 3. Invoke `tao-generate-od-defects` into
-   `${RESULTS_DIR}/iter${N}/synthetic/generation/`. Require
+   `${RESULTS_DIR}/iter${N}/synthetic/anomalygen_next_generation/`. Require
    `validation_summary.json::status=COMPLETE`, exact generation accounting,
    and `training_pool_mutated=false`.
 4. Cross the explicit training-admission boundary:
 
    ```bash
    <skill_root>/scripts/deft_python.sh <skill_root>/scripts/stage_anomalygen_coco.py \
-     --validation-summary "${RESULTS_DIR}/iter${N}/synthetic/generation/validation_summary.json" \
-     --source-coco "${RESULTS_DIR}/iter${N}/synthetic/generation/pseudo_labels/coco_annotations_od_defect.json" \
+     --validation-summary "${RESULTS_DIR}/iter${N}/synthetic/anomalygen_next_generation/validation_summary.json" \
+     --source-coco "${RESULTS_DIR}/iter${N}/synthetic/anomalygen_next_generation/pseudo_labels/coco_annotations_od_defect.json" \
      --output-images-dir "${RESULTS_DIR}/iter${N}/synthetic/training/images" \
      --output-coco "${RESULTS_DIR}/iter${N}/synthetic/training/synthetic_train.json" \
      --target-class "<config.anomalygen_target_class>" \
      --report-json "${RESULTS_DIR}/iter${N}/synthetic/training/staging_report.json"
    ```
 
-   The script requires the generated summary to preserve
-   `training_eligible=true`, collision-proofs basenames, and records
-   `training_pool_mutated=true` only in its new staging report. It never alters
-   the generator's immutable validation summary.
+   The script requires a complete immutable generation summary,
+   collision-proofs basenames, and records `training_pool_mutated=true` only in
+   its new staging report. It never alters the generator's validation summary.
 5. Convert the staged COCO to ODVG with the standard
    `assets/overlays/coco_to_odvg.yaml` flow used by source-pool preparation.
    Write both files under
@@ -113,7 +117,7 @@ needs each FN box and mask identity.
 6. Commit the normal `stage` artifacts plus:
 
    ```text
-   --synthetic-validation-summary <generation/validation_summary.json>
+   --synthetic-validation-summary <anomalygen_next_generation/validation_summary.json>
    --synthetic-coco <training/synthetic_train.json>
    --synthetic-odvg <training/annotations/synthetic_train_odvg.jsonl>
    --synthetic-label-map <training/annotations/synthetic_train_odvg_labelmap.json>
@@ -147,7 +151,6 @@ proof that synthetic data participates in the next training cycle.
 
 - zero eligible/generated synthetic rows when the producer is enabled;
 - any incomplete or inconsistent generation summary;
-- `training_eligible` absent, false, or changed across the producer handoff;
 - a target class absent from the detector target set;
 - COCO image/annotation mismatch or failed COCO→ODVG validation;
 - a train spec missing either enabled producer's current-iteration source.

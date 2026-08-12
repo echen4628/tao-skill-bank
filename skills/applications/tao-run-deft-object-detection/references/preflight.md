@@ -178,12 +178,13 @@ Resolve everything you can before asking the user. Parameter precedence is stric
     When enabled, read `references/anomalygen-next.md` and resolve every item in
     its preflight section: nested config template, installation/repository,
     Cosmos3-Nano base checkpoint, GPU count, optional provenance `source_tag`,
-    explicit `training_eligible: true`, and detector target class. Validate
-    every stable path in the template, every dataset checkpoint/recipe pair,
-    and confirm that the target class is in the detector target set. The
-    per-iteration `gap_parquet` is the only value replaced later. An absent or
-    false training-eligibility decision is a hard stop for loop admission, not
-    an overrideable warning.
+    and detector target class. This route is inference-only: validate that
+    every dataset checkpoint already exists, was fine-tuned for the requested
+    anomaly types, and matches its recipe. Require `defect_spec`; reject any
+    selected `spatial_dependency: text` entry without a non-empty
+    `roi_prompt_defect_location`. Confirm that the target class is in the
+    detector target set. The per-iteration `gap_parquet` is the only value
+    replaced later.
 
 **Required input — `max_iterations`.** No default. Ask if not supplied and do not proceed past Pre-Flight without it.
 

@@ -57,14 +57,15 @@ The output feeds the *next* iteration's miner as `exclude_path`, so the loop nev
 If `deft_state.json::config.anomalygen_enabled` is true, read and execute
 `references/anomalygen-next.md` now, before committing `stage`. That overlay
 prepares from this iteration's `box_gaps.parquet`, generates defects, enforces
-the frozen training-eligibility decision, stages generated COCO, converts it to
-ODVG, and lists the additional audited commit flags.
+the immutable generation/staging boundary, stages generated COCO, converts it
+to ODVG, and lists the additional audited commit flags.
 
 Resume from durable gates instead of regenerating completed work: validate and
-reuse a COMPLETE frozen phase-1 manifest; validate and reuse a COMPLETE
-generation summary whose input-manifest hash still matches; validate and reuse
-a COMPLETE staging report whose recorded files still exist. Never trust file
-presence alone, and never repair a frozen producer directory in place.
+reuse a COMPLETE prepared-input manifest; validate and reuse a COMPLETE
+generation summary whose prepared-input manifest hash still matches; validate
+and reuse a COMPLETE staging report whose recorded files still exist. Never
+trust file presence alone, and never repair a frozen producer directory in
+place.
 
 ## Mining budget
 
@@ -89,7 +90,7 @@ Point `--weak-parquet` at **iteration 1's** weak-images parquet on every iterati
   --label-map "${RESULTS_DIR}/iter${N}/tmm/annotations/labelmap.json" \
   --staged-images-dir "${RESULTS_DIR}/iter${N}/tmm/images" \
   --exclude-parquet "${RESULTS_DIR}/iter${N}/mined_cumulative.parquet" \
-  [--synthetic-validation-summary "${RESULTS_DIR}/iter${N}/synthetic/generation/validation_summary.json" \
+  [--synthetic-validation-summary "${RESULTS_DIR}/iter${N}/synthetic/anomalygen_next_generation/validation_summary.json" \
    --synthetic-coco "${RESULTS_DIR}/iter${N}/synthetic/training/synthetic_train.json" \
    --synthetic-odvg "${RESULTS_DIR}/iter${N}/synthetic/training/annotations/synthetic_train_odvg.jsonl" \
    --synthetic-label-map "${RESULTS_DIR}/iter${N}/synthetic/training/annotations/synthetic_train_odvg_labelmap.json" \

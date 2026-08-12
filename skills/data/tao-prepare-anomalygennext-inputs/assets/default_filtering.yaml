@@ -1,10 +1,11 @@
 # Copy this file and replace every /path/to value before running.
 # Optional opaque provenance label; no policy is inferred from this value.
 source_tag: user_provided
-training_eligible: false
 gap_parquet: /path/to/box_gaps.parquet
 split_root: /path/to/split_manifests
 pool_dataset_root: /path/to/anomalygen_dataset
+# Required. Each text-routed defect must include a non-empty
+# roi_prompt_defect_location in this JSONL.
 defect_spec: /path/to/anomalygen_dataset/defect_spec.jsonl
 
 datasets:
@@ -12,6 +13,8 @@ datasets:
     path_marker: DATASET_MARKER
     texture_prefix: example_
     mask_style: stem_mask_png
+    # Required inference checkpoint already fine-tuned for this dataset's
+    # anomaly types. The recipe must describe the same supported types.
     checkpoint: /path/to/checkpoints/model/iter_000001000.pt
     recipe: /path/to/exp_texture_ft.yaml
 

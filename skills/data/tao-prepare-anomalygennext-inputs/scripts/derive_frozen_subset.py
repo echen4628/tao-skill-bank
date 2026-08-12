@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Derive a small immutable Phase-2 input root from selected frozen pairs."""
+"""Derive a small immutable AnomalyGenNext inference input root."""
 
 from __future__ import annotations
 
@@ -41,10 +41,12 @@ def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
 
 
 def _validate_parent(root: Path) -> tuple[dict[str, Any], Path]:
-    manifest_path = root / "phase1" / "phase1_manifest.json"
+    manifest_path = (
+        root / "prepared_anomalygennext_inputs" / "prepared_inputs_manifest.json"
+    )
     manifest = json.loads(manifest_path.read_text())
-    if manifest.get("status") != "COMPLETE" or not manifest.get("phase2_ready"):
-        raise ValueError("parent Phase 1 manifest is not COMPLETE/phase2_ready")
+    if manifest.get("status") != "COMPLETE" or not manifest.get("generation_ready"):
+        raise ValueError("parent prepared-input manifest is not COMPLETE/generation_ready")
     for artifact in manifest["artifacts"]:
         path = Path(artifact["path"])
         if not path.is_file() or _sha256(path) != artifact["sha256"]:
@@ -69,7 +71,13 @@ def derive(args: argparse.Namespace) -> None:
         )
 
     parent, parent_path = _validate_parent(source)
-    plan_rows = json.loads((source / "phase1" / "phase2_plan.json").read_text())
+    plan_rows = json.loads(
+        (
+            source
+            / "prepared_anomalygennext_inputs"
+            / "anomalygen_next_generation_plan.json"
+        ).read_text()
+    )
     matches = [row for row in plan_rows if str(row["dataset_id"]) == args.dataset]
     if len(matches) != 1:
         raise ValueError(f"expected one plan row for dataset={args.dataset!r}, found {len(matches)}")
@@ -112,8 +120,8 @@ def derive(args: argparse.Namespace) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(tempfile.mkdtemp(prefix=f".{output.name}.", dir=output.parent))
     try:
-        phase1 = temporary / "phase1"
-        directory = phase1 / "anomalygen_inputs" / args.dataset
+        prepared_inputs = temporary / "prepared_anomalygennext_inputs"
+        directory = prepared_inputs / "anomalygen_inputs" / args.dataset
         testcase = directory / "testcase.jsonl"
         provenance = directory / "provenance.jsonl"
         selected_testcase = [row[0] for row in selected]
@@ -126,14 +134,26 @@ def derive(args: argparse.Namespace) -> None:
             **parent_plan,
             "anomaly_type": anomaly_types[0] if len(anomaly_types) == 1 else ",".join(anomaly_types),
             "anomaly_types": anomaly_types,
-            "testcase": str(output / "phase1" / "anomalygen_inputs" / args.dataset / "testcase.jsonl"),
-            "provenance": str(output / "phase1" / "anomalygen_inputs" / args.dataset / "provenance.jsonl"),
+            "testcase": str(
+                output
+                / "prepared_anomalygennext_inputs"
+                / "anomalygen_inputs"
+                / args.dataset
+                / "testcase.jsonl"
+            ),
+            "provenance": str(
+                output
+                / "prepared_anomalygennext_inputs"
+                / "anomalygen_inputs"
+                / args.dataset
+                / "provenance.jsonl"
+            ),
             "requested_rows": len(selected),
         }
-        plan_path = phase1 / "phase2_plan.json"
+        plan_path = prepared_inputs / "anomalygen_next_generation_plan.json"
         _write_json(plan_path, [plan])
 
-        unified = phase1 / "anomalygen_inputs.jsonl"
+        unified = prepared_inputs / "anomalygen_inputs.jsonl"
         _write_jsonl(
             unified,
             [
@@ -146,7 +166,7 @@ def derive(args: argparse.Namespace) -> None:
                 for testcase_row, provenance_row in selected
             ],
         )
-        request_path = phase1 / "subset_request.json"
+        request_path = prepared_inputs / "subset_request.json"
         _write_json(
             request_path,
             {
@@ -163,9 +183,20 @@ def derive(args: argparse.Namespace) -> None:
         for temporary_path, final_path in (
             (testcase, Path(plan["testcase"])),
             (provenance, Path(plan["provenance"])),
-            (unified, output / "phase1" / "anomalygen_inputs.jsonl"),
-            (plan_path, output / "phase1" / "phase2_plan.json"),
-            (request_path, output / "phase1" / "subset_request.json"),
+            (
+                unified,
+                output / "prepared_anomalygennext_inputs" / "anomalygen_inputs.jsonl",
+            ),
+            (
+                plan_path,
+                output
+                / "prepared_anomalygennext_inputs"
+                / "anomalygen_next_generation_plan.json",
+            ),
+            (
+                request_path,
+                output / "prepared_anomalygennext_inputs" / "subset_request.json",
+            ),
         ):
             artifacts.append(
                 {
@@ -175,22 +206,21 @@ def derive(args: argparse.Namespace) -> None:
                 }
             )
         manifest = {
-            "schema_version": 1,
-            "phase": "filtering_subset",
+            "schema_version": 2,
+            "phase": "prepared_anomalygennext_inputs_subset",
             "status": "COMPLETE",
             "source_tag": parent["source_tag"],
-            "training_eligible": parent["training_eligible"],
             "selected_fn_count": len({str(row["fn_id"]) for row in selected_provenance}),
             "selected_pair_count": len(pair_ids),
             "generator_row_count": len(selected),
             "generator_groups": [plan],
             "artifacts": artifacts,
-            "parent_phase1_manifest": str(parent_path),
-            "parent_phase1_manifest_sha256": _sha256(parent_path),
-            "phase2_ready": True,
+            "parent_prepared_inputs_manifest": str(parent_path),
+            "parent_prepared_inputs_manifest_sha256": _sha256(parent_path),
+            "generation_ready": True,
             "training_pool_mutated": False,
         }
-        _write_json(phase1 / "phase1_manifest.json", manifest)
+        _write_json(prepared_inputs / "prepared_inputs_manifest.json", manifest)
         os.replace(temporary, output)
     except BaseException:
         shutil.rmtree(temporary, ignore_errors=True)

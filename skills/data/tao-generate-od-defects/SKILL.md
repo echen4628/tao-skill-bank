@@ -1,13 +1,14 @@
 ---
 name: tao-generate-od-defects
 description: >-
-  Generate synthetic object-detection defects with AnomalyGenNext from a completed, hash-validated
-  testcase input directory. Run generation, evaluation, zero-round selection, pseudo-labeling, and
-  COCO reconciliation while preserving fine-grained defect types. Use when asked to generate OD
-  defects, run AnomalyGenNext from frozen inputs, create synthetic defect images with COCO labels,
-  or validate an AnomalyGenNext object-detection dataset.
+  Run AnomalyGenNext inference from completed, hash-validated object-detection testcases. Generate,
+  evaluate, select, pseudo-label, and reconcile synthetic defects as COCO while preserving
+  fine-grained defect types. This version supports inference only and requires an existing
+  task-fine-tuned AnomalyGenNext checkpoint. Use when asked to run AnomalyGenNext inference,
+  generate OD defects from frozen inputs, create synthetic defect images with COCO labels, or
+  validate an AnomalyGenNext object-detection dataset.
 license: Apache-2.0
-compatibility: Requires an AnomalyGenNext Python environment, uv, one or more CUDA GPUs, and completed inputs from tao-prepare-anomalygen-inputs.
+compatibility: Requires an AnomalyGenNext Python environment, uv, one or more CUDA GPUs, completed inputs from tao-prepare-anomalygennext-inputs, and an existing fine-tuned AnomalyGenNext checkpoint.
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
@@ -23,8 +24,9 @@ tags:
 
 # Generate AnomalyGenNext OD Defects
 
-Consume only frozen inputs from `tao-prepare-anomalygen-inputs` and produce a
-validated synthetic defect dataset with native fine-grained COCO labels.
+Consume only frozen inputs from `tao-prepare-anomalygennext-inputs` and run
+AnomalyGenNext in `inference_only` mode to produce a validated synthetic defect
+dataset with native fine-grained COCO labels.
 
 ## Boundary
 
@@ -32,16 +34,26 @@ This skill does not read an OD gap parquet, select false negatives, compute
 embeddings, retrieve clean images, or run source-mask filtering. Those decisions
 are already frozen in the input manifest and testcase JSONLs.
 
+This skill does not fine-tune AnomalyGenNext. Every generation-plan row must
+point to an existing checkpoint already fine-tuned for that row's anomaly types
+and to its matching recipe. Future full and fine-tune-only workflows belong in
+this generic data-skill layer, not in a DEFT application overlay.
+
 ## Inputs
 
-- Completed input root containing `phase1/phase1_manifest.json`.
+- Completed input root containing
+  `prepared_anomalygennext_inputs/prepared_inputs_manifest.json`.
 - AnomalyGenNext checkout or shared installation.
 - Cosmos3-Nano base checkpoint.
+- A task-fine-tuned AnomalyGenNext checkpoint and matched recipe for each
+  dataset route, frozen into the generation plan.
 - One or more visible GPUs.
 - Optional comma-separated dataset subset from the frozen plan.
 
-The manifest must report `COMPLETE` and `phase2_ready=true`. Every artifact hash
-is recomputed before GPU work starts.
+The manifest must report `COMPLETE` and `generation_ready=true`. Every artifact
+hash is recomputed before GPU work starts. `defect_spec` is required by the
+preparation skill and is already represented in the frozen testcases; it is not
+a second generation CLI argument.
 
 ## Quick Start
 
@@ -53,7 +65,7 @@ GEN_SKILL=skills/data/tao-generate-od-defects
 
 bash "$GEN_SKILL/scripts/generate_od_defects.sh" \
   --inputs-dir /path/to/completed-inputs \
-  --output-dir /path/to/generated-defects \
+  --output-dir /path/to/anomalygen_next_generation \
   --anomalygen-repo /path/to/cosmos3-anomalygen \
   --base-checkpoint /path/to/Cosmos3-Nano/model \
   --num-gpus 1
@@ -61,6 +73,9 @@ bash "$GEN_SKILL/scripts/generate_od_defects.sh" \
 
 Use `--datasets dagm,mpdd` to generate a self-contained subset without changing
 the frozen input directory. `--num-gpus` must match the platform allocation.
+Use `anomalygen_next_generation` as the semantic output-directory name.
+`--output-dir` must not exist unless `--resume-existing-generation` is supplied;
+ordinary runs never overwrite another generation.
 
 Read `references/execution-contract.md` for the exact upstream commands and
 output accounting.
@@ -82,9 +97,9 @@ For each selected dataset group:
 ## Output Contract
 
 ```text
-generation/DATASET/raw/
-generation/DATASET/searched/reconstructed_image/
-generation/DATASET/searched/pseudo_labels/coco_annotations.json
+DATASET/raw/
+DATASET/searched/reconstructed_image/
+DATASET/searched/pseudo_labels/coco_annotations.json
 pseudo_labels/coco_annotations.json
 pseudo_labels/coco_annotations_od_defect.json
 validation_summary.json
@@ -107,13 +122,12 @@ projection for compatible detector training.
 - `validation_summary.json` reports `status=COMPLETE` and
   `training_pool_mutated=false`.
 
-## Quarantine
+## Training handoff
 
 Treat `source_tag` as opaque provenance and propagate it from the frozen input
-manifest. Also propagate the frozen boolean `training_eligible` decision
-without interpreting or changing it. This skill never appends outputs to a
-detector training pool; a calling application must require explicit eligibility
-before staging data for training.
+manifest. This skill never appends outputs to a detector training pool and
+always reports `training_pool_mutated=false`. A calling application owns the
+separate, validated training-admission boundary.
 
 ## Gallery
 
@@ -121,9 +135,9 @@ After completion, build a self-contained provenance gallery:
 
 ```bash
 python "$GEN_SKILL/scripts/build_od_defect_gallery.py" \
-  --phase1-root /path/to/completed-inputs \
-  --phase2-root /path/to/generated-defects \
-  --output-dir /path/to/generated-defects/synthetic_gallery
+  --prepared-inputs-root /path/to/completed-inputs \
+  --generation-root /path/to/anomalygen_next_generation \
+  --output-dir /path/to/anomalygen_next_generation/synthetic_gallery
 ```
 
 The gallery shows FN image, source mask, clean neighbor, aligned mask, generated

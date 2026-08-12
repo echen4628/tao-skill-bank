@@ -57,18 +57,17 @@ class SyntheticTrainingHandoffTest(unittest.TestCase):
             )
         )
         self.summary = self.root / "validation_summary.json"
-        self._write_summary("test_fixture", training_eligible=True)
+        self._write_summary("test_fixture")
 
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def _write_summary(self, source_tag: str, *, training_eligible: bool) -> None:
+    def _write_summary(self, source_tag: str) -> None:
         self.summary.write_text(
             json.dumps(
                 {
                     "status": "COMPLETE",
                     "source_tag": source_tag,
-                    "training_eligible": training_eligible,
                     "od_coco": str(self.source_coco),
                     "training_pool_mutated": False,
                 }
@@ -87,18 +86,13 @@ class SyntheticTrainingHandoffTest(unittest.TestCase):
             )
         )
 
-    def test_training_eligible_generation_is_staged_with_explicit_mutation_record(self) -> None:
+    def test_validated_generation_is_staged_with_explicit_mutation_record(self) -> None:
         report = self._stage()
         self.assertTrue(report["training_pool_mutated"])
         staged = json.loads(Path(report["output_coco"]).read_text())
         self.assertEqual(staged["categories"], [{"id": 1, "name": "defect"}])
         self.assertEqual(staged["images"][0]["file_name"], "synthetic_00000007.png")
         self.assertTrue((Path(report["output_images_dir"]) / "synthetic_00000007.png").is_file())
-
-    def test_ineligible_generation_cannot_cross_the_training_boundary(self) -> None:
-        self._write_summary("evaluation_data", training_eligible=False)
-        with self.assertRaisesRegex(ValueError, "training_eligible"):
-            self._stage()
 
     def _source(self, phase: str, producer: str) -> tuple[Path, Path, Path]:
         root = self.root / phase / producer
@@ -180,7 +174,16 @@ class SyntheticTrainingHandoffTest(unittest.TestCase):
         ag_pool = workspace / "ag-pool"
         ag_pool.mkdir()
         defect_spec = workspace / "defect_spec.jsonl"
-        defect_spec.write_text("{}\n")
+        defect_spec.write_text(
+            json.dumps(
+                {
+                    "defect_type": "example+scratch",
+                    "spatial_dependency": "free",
+                    "roi_prompt_defect_location": "",
+                }
+            )
+            + "\n"
+        )
         ag_repo = workspace / "anomalygen-next"
         ag_repo.mkdir()
         base_checkpoint = workspace / "cosmos-base"
@@ -194,7 +197,6 @@ class SyntheticTrainingHandoffTest(unittest.TestCase):
             yaml.safe_dump(
                 {
                     "source_tag": "test_fixture",
-                    "training_eligible": True,
                     "gap_parquet": "/replaced/per/iteration.parquet",
                     "split_root": str(split_root),
                     "pool_dataset_root": str(ag_pool),
@@ -329,10 +331,9 @@ class SyntheticTrainingHandoffTest(unittest.TestCase):
         self.assertTrue(any("did not record synthetic artifacts" in e for e in report["errors"]))
 
         generation = file(
-            "iter1/synthetic/generation/validation_summary.json",
+            "iter1/synthetic/anomalygen_next_generation/validation_summary.json",
             json.dumps(
                 {"status": "COMPLETE", "source_tag": "test_fixture",
-                 "training_eligible": True,
                  "training_pool_mutated": False}
             ),
         )
@@ -340,7 +341,6 @@ class SyntheticTrainingHandoffTest(unittest.TestCase):
             "iter1/synthetic/training/staging_report.json",
             json.dumps(
                 {"status": "COMPLETE", "source_tag": "test_fixture",
-                 "training_eligible": True,
                  "training_pool_mutated": True}
             ),
         )

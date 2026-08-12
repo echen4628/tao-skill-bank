@@ -17,8 +17,8 @@ import yaml
 from PIL import Image
 
 
-SCRIPT = Path(__file__).resolve().parents[1] / "prepare_anomalygen_inputs.py"
-SPEC = importlib.util.spec_from_file_location("prepare_anomalygen_inputs", SCRIPT)
+SCRIPT = Path(__file__).resolve().parents[1] / "prepare_anomalygennext_inputs.py"
+SPEC = importlib.util.spec_from_file_location("prepare_anomalygennext_inputs", SCRIPT)
 assert SPEC and SPEC.loader
 pipeline = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(pipeline)
@@ -40,8 +40,8 @@ class PipelineContractTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
-        self.run = self.root / "phase1-run"
-        self.phase2 = self.root / "phase2-run"
+        self.run = self.root / "prepared-inputs-run"
+        self.generation_run = self.root / "generation-run"
         self.source = self.root / "source" / "Toy" / "widget"
         self.fn_image = self.source / "test" / "scratch" / "001.png"
         self.fn_mask = self.source / "ground_truth" / "scratch" / "001_mask.png"
@@ -102,7 +102,6 @@ class PipelineContractTest(unittest.TestCase):
             yaml.safe_dump(
                 {
                     "source_tag": "test_fixture",
-                    "training_eligible": False,
                     "gap_parquet": str(self.root / "gaps.parquet"),
                     "split_root": str(self.root / "splits"),
                     "pool_dataset_root": str(self.root / "pool"),
@@ -142,8 +141,8 @@ class PipelineContractTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def _run_phase1(self) -> None:
-        pipeline.prepare_phase1(
+    def _run_preparation(self) -> None:
+        pipeline.prepare_inputs(
             type("Args", (), {"config": str(self.config), "run_root": str(self.run)})()
         )
         clean = pd.read_parquet(self.run / "manifests" / "clean_pool.parquet")
@@ -185,24 +184,23 @@ class PipelineContractTest(unittest.TestCase):
                 }
             )
         pipeline._write_jsonl(self.run / "amp" / "testcase.jsonl", amp_rows)
-        pipeline.finalize_phase1(
+        pipeline.finalize_inputs(
             type("Args", (), {"config": str(self.config), "run_root": str(self.run)})()
         )
 
-    def test_phase1_freezes_exact_generator_inputs(self) -> None:
-        self._run_phase1()
-        manifest = json.loads((self.run / "phase1" / "phase1_manifest.json").read_text())
+    def test_prepared_inputs_freezes_exact_generator_inputs(self) -> None:
+        self._run_preparation()
+        manifest = json.loads((self.run / "prepared_anomalygennext_inputs" / "prepared_inputs_manifest.json").read_text())
         self.assertEqual(manifest["source_tag"], "test_fixture")
-        self.assertFalse(manifest["training_eligible"])
         self.assertEqual(manifest["selected_fn_count"], 1)
         self.assertEqual(manifest["selected_pair_count"], 2)
         self.assertEqual(manifest["generator_row_count"], 4)
         self.assertEqual(manifest["generator_groups"][0]["anomaly_types"], ["toy_widget+scratch"])
         rows = pipeline._read_jsonl(
-            self.run / "phase1" / "anomalygen_inputs" / "toy" / "testcase.jsonl"
+            self.run / "prepared_anomalygennext_inputs" / "anomalygen_inputs" / "toy" / "testcase.jsonl"
         )
         self.assertEqual(len(rows), 4)
-        pipeline.validate_phase1(type("Args", (), {"phase1_root": str(self.run)})())
+        pipeline.validate_prepared_inputs(type("Args", (), {"prepared_inputs_root": str(self.run)})())
 
     def test_source_tag_is_optional_provenance(self) -> None:
         config = yaml.safe_load(self.config.read_text())
@@ -210,9 +208,24 @@ class PipelineContractTest(unittest.TestCase):
         self.config.write_text(yaml.safe_dump(config))
         loaded = pipeline._load_config(self.config)
         self.assertEqual(loaded["source_tag"], "user_provided")
-        self.assertFalse(loaded["training_eligible"])
 
-    def test_phase1_all_eligible_selects_across_split_buckets(self) -> None:
+    def test_text_defect_requires_placement_prompt(self) -> None:
+        (self.root / "defect_spec.jsonl").write_text(
+            json.dumps(
+                {
+                    "defect_type": "toy_widget+scratch",
+                    "spatial_dependency": "text",
+                    "roi_prompt_defect_location": "",
+                }
+            )
+            + "\n"
+        )
+        with self.assertRaisesRegex(ValueError, "roi_prompt_defect_location"):
+            pipeline.prepare_inputs(
+                type("Args", (), {"config": str(self.config), "run_root": str(self.run)})()
+            )
+
+    def test_prepared_inputs_all_eligible_selects_across_split_buckets(self) -> None:
         second_image = self.source / "test" / "scratch" / "002.png"
         second_mask = self.source / "ground_truth" / "scratch" / "002_mask.png"
         write_image(second_image, 96)
@@ -253,7 +266,7 @@ class PipelineContractTest(unittest.TestCase):
         }
         self.config.write_text(yaml.safe_dump(config, sort_keys=False))
 
-        pipeline.prepare_phase1(
+        pipeline.prepare_inputs(
             type("Args", (), {"config": str(self.config), "run_root": str(self.run)})()
         )
 
@@ -276,7 +289,7 @@ class PipelineContractTest(unittest.TestCase):
         }
         self.config.write_text(yaml.safe_dump(config, sort_keys=False))
 
-        pipeline.prepare_phase1(
+        pipeline.prepare_inputs(
             type("Args", (), {"config": str(self.config), "run_root": str(self.run)})()
         )
         embedding_inputs = pd.read_parquet(
@@ -324,7 +337,7 @@ class PipelineContractTest(unittest.TestCase):
                 }
             )
         pipeline._write_jsonl(self.run / "amp" / "testcase.jsonl", amp_rows)
-        pipeline.finalize_phase1(
+        pipeline.finalize_inputs(
             type("Args", (), {"config": str(self.config), "run_root": str(self.run)})()
         )
         selected = pd.read_parquet(self.run / "manifests" / "selected_pairs.parquet")
@@ -335,16 +348,16 @@ class PipelineContractTest(unittest.TestCase):
         self.assertEqual(len(clean_by_fn), 2)
         self.assertTrue(set.intersection(*clean_by_fn.values()))
         provenance = pipeline._read_jsonl(
-            self.run / "phase1" / "anomalygen_inputs" / "toy" / "provenance.jsonl"
+            self.run / "prepared_anomalygennext_inputs" / "anomalygen_inputs" / "toy" / "provenance.jsonl"
         )
         self.assertEqual({row["od_category"] for row in provenance}, {"defect"})
 
-    def test_phase1_rejects_unknown_selection_mode(self) -> None:
+    def test_prepared_inputs_rejects_unknown_selection_mode(self) -> None:
         config = yaml.safe_load(self.config.read_text())
         config["selection"]["mode"] = "surprise"
         self.config.write_text(yaml.safe_dump(config, sort_keys=False))
         with self.assertRaisesRegex(ValueError, "unsupported selection.mode"):
-            pipeline.prepare_phase1(
+            pipeline.prepare_inputs(
                 type("Args", (), {"config": str(self.config), "run_root": str(self.run)})()
             )
 
@@ -374,13 +387,13 @@ class PipelineContractTest(unittest.TestCase):
         self.assertEqual(defect_class, "defect")
         self.assertEqual(mask, expected_mask)
 
-    def test_phase1_gate_rejects_changed_phase2_plan(self) -> None:
-        self._run_phase1()
-        plan_path = self.run / "phase1" / "phase2_plan.json"
+    def test_prepared_inputs_gate_rejects_changed_anomalygen_next_generation_plan(self) -> None:
+        self._run_preparation()
+        plan_path = self.run / "prepared_anomalygennext_inputs" / "anomalygen_next_generation_plan.json"
         plan_path.write_text(plan_path.read_text() + "\n")
         with self.assertRaisesRegex(ValueError, "artifact changed"):
-            pipeline.validate_phase1(
-                type("Args", (), {"phase1_root": str(self.run)})()
+            pipeline.validate_prepared_inputs(
+                type("Args", (), {"prepared_inputs_root": str(self.run)})()
             )
 
 if __name__ == "__main__":

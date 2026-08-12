@@ -6,8 +6,16 @@ mask, retrieval, or frozen-manifest failure.
 ## Configuration
 
 Use nested YAML. Dataset entries declare how to identify an image path, derive
-the AnomalyGen texture and defect class, locate the matching mask, and route the
-result to a matched checkpoint and recipe.
+the AnomalyGenNext texture and defect class, locate the matching mask, and route
+the result to a matched inference checkpoint and recipe. The checkpoint must
+already be fine-tuned for the specific anomaly types in the recipe; this skill
+does not fine-tune AnomalyGenNext.
+
+`defect_spec` is required. It must contain one row for every selected
+`TEXTURE+TYPE`. For `spatial_dependency: text`, require a non-empty
+`roi_prompt_defect_location`. Treat that field as the authoritative placement
+prompt and never synthesize a replacement. The preparation gate rejects a text
+entry with a missing or blank prompt.
 
 `selection.mode=per_dataset` requires `split` and `per_dataset` for bounded
 tests. `selection.mode=all_eligible` selects every compatible FN across the
@@ -51,10 +59,10 @@ Use `split_components`, `defect_class_fixed`, `mask_component_replacements`,
 
 ## Staged actions
 
-`prepare-phase1` emits unique image rows for embedding and a separate
+`prepare-inputs` emits unique image rows for embedding and a separate
 `selected_fn_queries.parquet` that retains every box-level FN. After embedding,
 `build-knn-and-amp` joins each unique image embedding back to every query and
-emits per-FN AMP requests. `finalize-phase1` retains only pairs whose two mask
+emits per-FN AMP requests. `finalize-inputs` retains only pairs whose two mask
 branches both produced valid aligned masks and writes the frozen manifest.
 Validation must prove that every eligible `fn_id` is either represented by its
 own output rows or has an explicit skip reason.
@@ -64,3 +72,6 @@ own output rows or has an explicit skip reason.
 The manifest hashes all files consumed by generation. Absolute paths are part
 of the contract, so move neither the input root nor its referenced source files
 after finalization.
+
+Write them beneath `prepared_anomalygennext_inputs/`; do not use numbered phase
+directories. A preparation output root is immutable and must not be reused.

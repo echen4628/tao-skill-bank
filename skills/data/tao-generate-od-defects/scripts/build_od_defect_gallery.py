@@ -67,10 +67,9 @@ def representative_rows(rows: list[dict[str, Any]], limit: int | None) -> list[d
     return sorted(selected, key=lambda row: int(row["generation_index"]))
 
 
-def generation_outputs(phase2: Path, dataset_id: str) -> dict[tuple[str, str], str]:
+def generation_outputs(generation_root: Path, dataset_id: str) -> dict[tuple[str, str], str]:
     ledger = (
-        phase2
-        / "generation"
+        generation_root
         / dataset_id
         / "raw"
         / "texture_ft_generation_result.csv"
@@ -112,30 +111,38 @@ def asset(
 def build(args: argparse.Namespace) -> None:
     if args.max_cards_per_dataset is not None and args.max_cards_per_dataset <= 0:
         raise ValueError("--max-cards-per-dataset must be positive")
-    phase1 = Path(args.phase1_root)
-    phase2 = Path(args.phase2_root)
+    prepared_root = Path(args.prepared_inputs_root)
+    generation_root = Path(args.generation_root)
     output = Path(args.output_dir)
     if output.exists():
         shutil.rmtree(output)
     output.mkdir(parents=True)
 
-    phase1_manifest_path = phase1 / "phase1" / "phase1_manifest.json"
-    phase1_manifest = json.loads(phase1_manifest_path.read_text())
-    validation_path = phase2 / "validation_summary.json"
+    prepared_inputs_manifest_path = (
+        prepared_root
+        / "prepared_anomalygennext_inputs"
+        / "prepared_inputs_manifest.json"
+    )
+    prepared_inputs_manifest = json.loads(prepared_inputs_manifest_path.read_text())
+    validation_path = generation_root / "validation_summary.json"
     validation = json.loads(validation_path.read_text())
-    if phase1_manifest.get("status") != "COMPLETE" or validation.get("status") != "COMPLETE":
-        raise ValueError("both Phase 1 and Phase 2 must be COMPLETE")
-    if validation.get("phase1_manifest_sha256") != sha256(phase1_manifest_path):
-        raise ValueError("Phase 2 does not match the current Phase 1 manifest hash")
+    if prepared_inputs_manifest.get("status") != "COMPLETE" or validation.get("status") != "COMPLETE":
+        raise ValueError("both prepared inputs and generation must be COMPLETE")
+    if validation.get("prepared_inputs_manifest_sha256") != sha256(prepared_inputs_manifest_path):
+        raise ValueError("generation does not match the prepared-input manifest hash")
 
     selected_datasets = {str(group["dataset_id"]) for group in validation["groups"]}
     rows = [
         row
-        for row in read_jsonl(phase1 / "phase1" / "anomalygen_inputs.jsonl")
+        for row in read_jsonl(
+            prepared_root
+            / "prepared_anomalygennext_inputs"
+            / "anomalygen_inputs.jsonl"
+        )
         if str(row["dataset_id"]) in selected_datasets
     ]
     output_ledgers = {
-        dataset_id: generation_outputs(phase2, dataset_id)
+        dataset_id: generation_outputs(generation_root, dataset_id)
         for dataset_id in selected_datasets
     }
     available_rows = []
@@ -179,7 +186,7 @@ def build(args: argparse.Namespace) -> None:
         generation_index = int(row["generation_index"])
         output_filename = str(row["_output_filename"])
         generated_stem = Path(output_filename).stem
-        searched = phase2 / "generation" / dataset_id / "searched"
+        searched = generation_root / dataset_id / "searched"
         reconstructed = searched / "reconstructed_image" / f"{generated_stem}.png"
         pseudo_label_overlay = (
             searched / "pseudo_labels" / "visualization" / f"{generated_stem}.png"
@@ -275,7 +282,7 @@ def build(args: argparse.Namespace) -> None:
         f'<span>{html.escape(str(group["anomaly_type"]))}</span></div>'
         for group in validation["groups"]
     )
-    checkpoint = phase1_manifest["generator_groups"][0]["checkpoint"]
+    checkpoint = prepared_inputs_manifest["generator_groups"][0]["checkpoint"]
     page = f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>AnomalyGenNext synthetic gallery</title>
@@ -294,7 +301,7 @@ def build(args: argparse.Namespace) -> None:
 <div class="notice">The native labels preserve each specific AnomalyGenNext type. <code>defect</code> is only the optional downstream binary-OD projection.<br>
 <b>Overlay legend:</b> the final panel is the generated defective image with the pseudo-label's translucent blue instance mask and red COCO bounding box. <b>Cosine</b> is whole-image SigLIP similarity from the FN image to the selected clean neighbor; it is a retrieval score, not model confidence or generation quality.</div>
 <section class="summary"><div class="metric"><strong>{validation['generated_images']}/{validation['requested_rows']}</strong><span>generated / requested</span></div><div class="metric"><strong>{validation['annotations']}</strong><span>pseudo-label annotations</span></div>{group_summary}</section>
-<p><b>Checkpoint:</b> <code>{html.escape(str(checkpoint))}</code><br><b>Phase 1 SHA-256:</b> <code>{html.escape(validation['phase1_manifest_sha256'])}</code><br><b>Training pool mutated:</b> <code>false</code></p>
+<p><b>Checkpoint:</b> <code>{html.escape(str(checkpoint))}</code><br><b>Prepared-input SHA-256:</b> <code>{html.escape(validation['prepared_inputs_manifest_sha256'])}</code><br><b>Training pool mutated:</b> <code>false</code></p>
 <nav class="filters" id="gallery">{filters}<button data-branch="fn_mask">FN masks</button><button data-branch="same_type_sampled_mask">Sampled masks</button></nav>
 <main>{''.join(cards)}</main><footer>Source tag: <code>{html.escape(validation['source_tag'])}</code> · Gallery contains {len(cards)} immutable provenance chains.</footer>
 </div><script>
@@ -312,8 +319,8 @@ buttons.forEach(b=>b.addEventListener('click',()=>{{buttons.forEach(x=>x.classLi
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--phase1-root", required=True)
-    parser.add_argument("--phase2-root", required=True)
+    parser.add_argument("--prepared-inputs-root", required=True)
+    parser.add_argument("--generation-root", required=True)
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--max-cards-per-dataset", type=int)
     build(parser.parse_args())

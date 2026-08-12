@@ -7,11 +7,11 @@ set -Eeuo pipefail
 
 usage() {
   cat <<'EOF'
-Usage: prepare_anomalygen_sources.sh --config PATH --output-dir PATH [options]
+Usage: prepare_anomalygennext_sources.sh --config PATH --output-dir PATH [options]
 
 Required:
   --config PATH        Filtering and dataset-routing YAML
-  --output-dir PATH    New or matching preparation directory
+  --output-dir PATH    New preparation directory; must not already exist
 
 Optional:
   --python PATH        Host Python with pandas, pyarrow, Pillow, NumPy, and PyYAML
@@ -37,25 +37,22 @@ done
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 RUN_ROOT=${RUN_ROOT:?--output-dir must be set}
 PIPELINE_CONFIG=${PIPELINE_CONFIG:?--config must be set}
-PIPELINE_PY=${PIPELINE_PY:-$SCRIPT_DIR/prepare_anomalygen_inputs.py}
+PIPELINE_PY=${PIPELINE_PY:-$SCRIPT_DIR/prepare_anomalygennext_inputs.py}
 PREPARE_PYTHON=${PREPARE_PYTHON:-python3}
 
 test -f "$PIPELINE_CONFIG"
 test -f "$PIPELINE_PY"
 command -v "$PREPARE_PYTHON" >/dev/null 2>&1 || test -x "$PREPARE_PYTHON"
 
-mkdir -p "$RUN_ROOT/phase1" "$RUN_ROOT/logs"
-config_snapshot="$RUN_ROOT/phase1/filtering_config.yaml"
-if [ -e "$config_snapshot" ]; then
-  cmp -s "$PIPELINE_CONFIG" "$config_snapshot" || {
-    echo "refusing to reuse $RUN_ROOT with a different filtering config" >&2
-    exit 2
-  }
-else
-  cp "$PIPELINE_CONFIG" "$config_snapshot"
+if [ -e "$RUN_ROOT" ]; then
+  echo "refusing to overwrite existing preparation directory: $RUN_ROOT" >&2
+  exit 2
 fi
+mkdir -p "$RUN_ROOT/prepared_anomalygennext_inputs" "$RUN_ROOT/logs"
+config_snapshot="$RUN_ROOT/prepared_anomalygennext_inputs/filtering_config.yaml"
+cp "$PIPELINE_CONFIG" "$config_snapshot"
 
-"$PREPARE_PYTHON" "$PIPELINE_PY" prepare-phase1 \
+"$PREPARE_PYTHON" "$PIPELINE_PY" prepare-inputs \
   --config "$config_snapshot" --run-root "$RUN_ROOT" \
   2>&1 | tee "$RUN_ROOT/logs/prepare_sources.log"
 

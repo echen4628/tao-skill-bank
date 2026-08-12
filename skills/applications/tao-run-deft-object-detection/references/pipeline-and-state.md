@@ -81,10 +81,9 @@ Each iteration's `gap_analysis` consumes the **previous** phase's inference labe
    Staging writes `tmm_odvg.jsonl` (one line per mined image, `image_id` renumbered sequentially, `instances[].label` remapped through the labelmap) and `labelmap.json`. `stage_mined_odvg.py` **truncates** `tmm_odvg.jsonl` before writing — the reference implementation opened it in append mode, so re-running an iteration silently duplicated every entry. See `references/stage-mined-data.md`.
 
    When `state.config.anomalygen_enabled=true`, continue inside this same
-   disk-backed stage: run the preparation and generation skills from
-   `references/anomalygen-next.md`, admit only output carrying the frozen
-   `training_eligible=true` decision through `stage_anomalygen_coco.py`, and
-   convert the staged COCO to ODVG.
+   disk-backed stage: run the inference-only preparation and generation skills
+   from `references/anomalygen-next.md`, admit only complete validated output
+   through `stage_anomalygen_coco.py`, and convert the staged COCO to ODVG.
    Commit the synthetic validation summary, COCO, ODVG, label map, image
    directory, and staging report as optional audited stage artifacts. A
    generation-only directory is not a training source; this explicit admission
@@ -251,8 +250,8 @@ results/run_<YYYYMMDD_HHMMSS>/
     │   └── annotations/               # tmm_odvg.jsonl, labelmap.json
     ├── synthetic/                     # only when anomalygen_enabled=true
     │   ├── filtering.yaml             # per-iteration copy; gap_parquet patched
-    │   ├── inputs/                    # frozen phase-1 testcases + provenance
-    │   ├── generation/                # validated generated images + pseudo-labels
+    │   ├── inputs/                    # prepared AnomalyGenNext inputs + provenance
+    │   ├── anomalygen_next_generation/ # generated images + merged labels
     │   └── training/
     │       ├── images/                # collision-proof staged synthetic images
     │       ├── synthetic_train.json   # admitted, target-class-projected COCO

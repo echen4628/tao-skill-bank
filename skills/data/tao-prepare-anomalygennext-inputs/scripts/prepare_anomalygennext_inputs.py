@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Prepare frozen FN-driven inputs for AnomalyGenNext.
+"""Prepare frozen FN-driven inputs for AnomalyGenNext inference.
 
-Phase 1 is a filtering producer.  It resolves box-level false negatives,
-selects two same-type mask templates, embeds and searches compatible clean
-images, runs AMP, and freezes the exact generator testcase files.
-
-Phase 2 consumes only the frozen Phase 1 files.  The GPU generation commands
-remain in the launch wrapper; this module verifies the handoff and reconciles
-the generated COCO/provenance artifacts without depending on TAO SDK code.
+The preparation step resolves box-level false negatives, selects two same-type
+mask templates, embeds and searches compatible clean images, runs AMP, and
+freezes the exact generator testcase files. The separate generation skill
+consumes only these hash-validated files.
 """
 
 from __future__ import annotations
@@ -91,7 +88,6 @@ def _load_config(path: str | Path) -> dict[str, Any]:
     if not isinstance(config, dict):
         raise ValueError("pipeline config must be a mapping")
     required = {
-        "training_eligible",
         "gap_parquet",
         "split_root",
         "pool_dataset_root",
@@ -107,8 +103,6 @@ def _load_config(path: str | Path) -> dict[str, Any]:
     config.setdefault("source_tag", "user_provided")
     if not isinstance(config["source_tag"], str) or not config["source_tag"].strip():
         raise ValueError("pipeline config source_tag must be a non-empty provenance label")
-    if not isinstance(config["training_eligible"], bool):
-        raise ValueError("pipeline config training_eligible must be a boolean")
     return config
 
 
@@ -132,6 +126,13 @@ def _defect_spec(path: Path) -> dict[str, dict[str, Any]]:
         anomaly_type = str(row.get("defect_type", ""))
         if not anomaly_type or anomaly_type in result:
             raise ValueError(f"invalid or duplicate defect_type in {path}: {anomaly_type!r}")
+        if row.get("spatial_dependency") == "text" and not str(
+            row.get("roi_prompt_defect_location", "")
+        ).strip():
+            raise ValueError(
+                f"text-routed defect {anomaly_type!r} requires "
+                "roi_prompt_defect_location"
+            )
         result[anomaly_type] = row
     return result
 
@@ -261,7 +262,7 @@ def _split_metadata(split_root: Path, datasets: dict[str, Any]) -> dict[str, dic
     return result
 
 
-def prepare_phase1(args: argparse.Namespace) -> None:
+def prepare_inputs(args: argparse.Namespace) -> None:
     config = _load_config(args.config)
     config_path = Path(args.config).resolve()
     run = Path(args.run_root)
@@ -270,7 +271,7 @@ def prepare_phase1(args: argparse.Namespace) -> None:
         run / "specs",
         run / "embeddings",
         run / "amp",
-        run / "phase1" / "source_masks",
+        run / "prepared_anomalygennext_inputs" / "source_masks",
         run / "logs",
     ):
         path.mkdir(parents=True, exist_ok=True)
@@ -356,7 +357,6 @@ def prepare_phase1(args: argparse.Namespace) -> None:
                 "eligibility": not reasons,
                 "skip_reason": ";".join(reasons),
                 "source_tag": config["source_tag"],
-                "training_eligible": config["training_eligible"],
             }
         )
     ledger = pd.DataFrame(ledger_rows)
@@ -408,7 +408,7 @@ def prepare_phase1(args: argparse.Namespace) -> None:
         fn_id = selected["fn_id"]
         dataset_id = selected["dataset_id"]
         anomaly_type = selected["anomaly_type"]
-        source_dir = run / "phase1" / "source_masks" / fn_id
+        source_dir = run / "prepared_anomalygennext_inputs" / "source_masks" / fn_id
         isolated_path = source_dir / f"{fn_id}__fn_mask.png"
         fn_info = _isolate_fn_mask(
             Path(selected["fn_mask_source"]),
@@ -505,7 +505,6 @@ def prepare_phase1(args: argparse.Namespace) -> None:
         "filtering_config": str(config_path),
         "filtering_config_sha256": _sha256(config_path),
         "source_tag": config["source_tag"],
-        "training_eligible": config["training_eligible"],
         "gap_parquet": str(gaps_path),
         "split_root": config["split_root"],
         "selection": selection,
@@ -532,9 +531,9 @@ def prepare_phase1(args: argparse.Namespace) -> None:
         "source_mask_count": len(mask_selection),
         "training_pool_mutated": False,
     }
-    _write_json(run / "phase1" / "input_contract.json", contract)
+    _write_json(run / "prepared_anomalygennext_inputs" / "input_contract.json", contract)
     print(
-        f"prepare phase1 PASS: all_fn={len(ledger)} selected_fn={len(selected_rows)} "
+        f"prepare inputs PASS: all_fn={len(ledger)} selected_fn={len(selected_rows)} "
         f"clean={len(clean_pool)} masks={len(mask_selection)}"
     )
 
@@ -631,7 +630,6 @@ def build_knn_and_amp(args: argparse.Namespace) -> None:
                 "eligible_for_amp": not gate_reason,
                 "gate_reason": gate_reason,
                 "source_tag": config["source_tag"],
-                "training_eligible": config["training_eligible"],
             }
             candidates.append(candidate)
             if gate_reason:
@@ -683,7 +681,7 @@ def _amp_index(path: Path) -> dict[tuple[str, str], dict[str, Any]]:
     return result
 
 
-def finalize_phase1(args: argparse.Namespace) -> None:
+def finalize_inputs(args: argparse.Namespace) -> None:
     config = _load_config(args.config)
     run = Path(args.run_root)
     candidates = pd.read_parquet(run / "manifests" / "knn_candidates.parquet")
@@ -774,7 +772,6 @@ def finalize_phase1(args: argparse.Namespace) -> None:
                         "neighbor_rank": int(candidate["neighbor_rank"]),
                         "cosine_similarity": float(candidate["cosine_similarity"]),
                         "source_tag": config["source_tag"],
-                        "training_eligible": config["training_eligible"],
                     }
                 )
 
@@ -788,7 +785,7 @@ def finalize_phase1(args: argparse.Namespace) -> None:
     unified_rows = []
     for dataset_id in sorted(generator_rows):
         dataset = config["datasets"][dataset_id]
-        directory = run / "phase1" / "anomalygen_inputs" / dataset_id
+        directory = run / "prepared_anomalygennext_inputs" / "anomalygen_inputs" / dataset_id
         testcase = directory / "testcase.jsonl"
         provenance = directory / "provenance.jsonl"
         _write_jsonl(testcase, generator_rows[dataset_id])
@@ -819,61 +816,69 @@ def finalize_phase1(args: argparse.Namespace) -> None:
                     "generator_input": testcase_row,
                 }
             )
-    unified = run / "phase1" / "anomalygen_inputs.jsonl"
+    unified = run / "prepared_anomalygennext_inputs" / "anomalygen_inputs.jsonl"
     _write_jsonl(unified, unified_rows)
     artifacts.append({"path": str(unified), "sha256": _sha256(unified), "bytes": unified.stat().st_size})
-    phase2_plan_path = run / "phase1" / "phase2_plan.json"
-    _write_json(phase2_plan_path, plan_rows)
+    anomalygen_next_generation_plan_path = (
+        run / "prepared_anomalygennext_inputs" / "anomalygen_next_generation_plan.json"
+    )
+    _write_json(anomalygen_next_generation_plan_path, plan_rows)
     for path in (
         Path(args.config).resolve(),
-        run / "phase1" / "input_contract.json",
-        phase2_plan_path,
+        run / "prepared_anomalygennext_inputs" / "input_contract.json",
+        anomalygen_next_generation_plan_path,
     ):
         artifacts.append(
             {"path": str(path), "sha256": _sha256(path), "bytes": path.stat().st_size}
         )
     manifest = {
-        "schema_version": 1,
-        "phase": "filtering",
+        "schema_version": 2,
+        "phase": "prepared_anomalygennext_inputs",
         "status": "COMPLETE",
         "source_tag": config["source_tag"],
-        "training_eligible": config["training_eligible"],
         "selected_fn_count": int(selected_frame["fn_id"].nunique()) if not selected_frame.empty else 0,
         "selected_pair_count": len(selected_frame),
         "generator_row_count": len(unified_rows),
         "generator_groups": plan_rows,
         "artifacts": artifacts,
         "skip_counts": dict(Counter(status_frame["selection_reason"])),
-        "phase2_ready": bool(unified_rows),
+        "generation_ready": bool(unified_rows),
         "training_pool_mutated": False,
     }
-    _write_json(run / "phase1" / "phase1_manifest.json", manifest)
-    if not manifest["phase2_ready"]:
-        raise RuntimeError("Phase 1 produced no AnomalyGenNext input rows")
+    _write_json(
+        run / "prepared_anomalygennext_inputs" / "prepared_inputs_manifest.json",
+        manifest,
+    )
+    if not manifest["generation_ready"]:
+        raise RuntimeError("prepared inputs contain no AnomalyGenNext generation rows")
     print(
-        f"finalize phase1 PASS: fn={manifest['selected_fn_count']} "
+        f"finalize prepared inputs PASS: fn={manifest['selected_fn_count']} "
         f"pairs={manifest['selected_pair_count']} generator_rows={manifest['generator_row_count']}"
     )
 
 
-def _validate_phase1_root(root: Path) -> dict[str, Any]:
-    manifest_path = root / "phase1" / "phase1_manifest.json"
+def _validate_prepared_inputs_root(root: Path) -> dict[str, Any]:
+    manifest_path = (
+        root / "prepared_anomalygennext_inputs" / "prepared_inputs_manifest.json"
+    )
     manifest = json.loads(manifest_path.read_text())
-    if manifest.get("status") != "COMPLETE" or not manifest.get("phase2_ready"):
-        raise ValueError("Phase 1 manifest is not COMPLETE/phase2_ready")
+    if manifest.get("status") != "COMPLETE" or not manifest.get("generation_ready"):
+        raise ValueError("prepared-input manifest is not COMPLETE/generation_ready")
     for artifact in manifest["artifacts"]:
         path = Path(artifact["path"])
         if not path.is_file() or _sha256(path) != artifact["sha256"]:
-            raise ValueError(f"Phase 1 artifact changed or is missing: {path}")
+            raise ValueError(f"prepared-input artifact changed or is missing: {path}")
     return manifest
 
 
-def validate_phase1(args: argparse.Namespace) -> None:
-    root = Path(args.phase1_root)
-    manifest = _validate_phase1_root(root)
-    manifest_path = root / "phase1" / "phase1_manifest.json"
+def validate_prepared_inputs(args: argparse.Namespace) -> None:
+    root = Path(args.prepared_inputs_root)
+    manifest = _validate_prepared_inputs_root(root)
+    manifest_path = (
+        root / "prepared_anomalygennext_inputs" / "prepared_inputs_manifest.json"
+    )
     print(
-        f"phase1 frozen-input gate PASS: rows={manifest['generator_row_count']} "
+        f"prepared-input gate PASS: rows={manifest['generator_row_count']} "
         f"sha256={_sha256(manifest_path)}"
     )
 
@@ -882,24 +887,24 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser()
     commands = root.add_subparsers(dest="command", required=True)
 
-    command = commands.add_parser("prepare-phase1")
+    command = commands.add_parser("prepare-inputs")
     command.add_argument("--config", required=True)
     command.add_argument("--run-root", required=True)
-    command.set_defaults(func=prepare_phase1)
+    command.set_defaults(func=prepare_inputs)
 
     command = commands.add_parser("build-knn-and-amp")
     command.add_argument("--config", required=True)
     command.add_argument("--run-root", required=True)
     command.set_defaults(func=build_knn_and_amp)
 
-    command = commands.add_parser("finalize-phase1")
+    command = commands.add_parser("finalize-inputs")
     command.add_argument("--config", required=True)
     command.add_argument("--run-root", required=True)
-    command.set_defaults(func=finalize_phase1)
+    command.set_defaults(func=finalize_inputs)
 
-    command = commands.add_parser("validate-phase1")
-    command.add_argument("--phase1-root", required=True)
-    command.set_defaults(func=validate_phase1)
+    command = commands.add_parser("validate-prepared-inputs")
+    command.add_argument("--prepared-inputs-root", required=True)
+    command.set_defaults(func=validate_prepared_inputs)
 
     return root
 

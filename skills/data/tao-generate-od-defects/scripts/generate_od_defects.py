@@ -28,10 +28,12 @@ def _sha256(path: Path) -> str:
 
 
 def _validate_frozen_inputs(root: Path) -> dict[str, Any]:
-    manifest_path = root / "phase1" / "phase1_manifest.json"
+    manifest_path = (
+        root / "prepared_anomalygennext_inputs" / "prepared_inputs_manifest.json"
+    )
     manifest = json.loads(manifest_path.read_text())
-    if manifest.get("status") != "COMPLETE" or not manifest.get("phase2_ready"):
-        raise ValueError("frozen-input manifest is not COMPLETE/phase2_ready")
+    if manifest.get("status") != "COMPLETE" or not manifest.get("generation_ready"):
+        raise ValueError("frozen-input manifest is not COMPLETE/generation_ready")
     for artifact in manifest["artifacts"]:
         path = Path(artifact["path"])
         if not path.is_file() or _sha256(path) != artifact["sha256"]:
@@ -42,7 +44,9 @@ def _validate_frozen_inputs(root: Path) -> dict[str, Any]:
 def validate_inputs(args: argparse.Namespace) -> None:
     root = Path(args.inputs_dir)
     manifest = _validate_frozen_inputs(root)
-    manifest_path = root / "phase1" / "phase1_manifest.json"
+    manifest_path = (
+        root / "prepared_anomalygennext_inputs" / "prepared_inputs_manifest.json"
+    )
     print(
         f"frozen-input gate PASS: rows={manifest['generator_row_count']} "
         f"sha256={_sha256(manifest_path)}"
@@ -68,7 +72,13 @@ def _selected_groups(
 def emit_plan(args: argparse.Namespace) -> None:
     root = Path(args.inputs_dir)
     _validate_frozen_inputs(root)
-    rows = json.loads((root / "phase1" / "phase2_plan.json").read_text())
+    rows = json.loads(
+        (
+            root
+            / "prepared_anomalygennext_inputs"
+            / "anomalygen_next_generation_plan.json"
+        ).read_text()
+    )
     rows = _selected_groups(rows, args.datasets)
     for row in rows:
         anomaly_types = row.get("anomaly_types", [row["anomaly_type"]])
@@ -101,8 +111,16 @@ def finalize(args: argparse.Namespace) -> None:
     inputs = Path(args.inputs_dir)
     run = Path(args.run_root)
     input_manifest = _validate_frozen_inputs(inputs)
-    manifest_path = inputs / "phase1" / "phase1_manifest.json"
-    plan = json.loads((inputs / "phase1" / "phase2_plan.json").read_text())
+    manifest_path = (
+        inputs / "prepared_anomalygennext_inputs" / "prepared_inputs_manifest.json"
+    )
+    plan = json.loads(
+        (
+            inputs
+            / "prepared_anomalygennext_inputs"
+            / "anomalygen_next_generation_plan.json"
+        ).read_text()
+    )
     plan = _selected_groups(plan, args.datasets)
     merged_images: list[dict[str, Any]] = []
     merged_annotations: list[dict[str, Any]] = []
@@ -115,8 +133,8 @@ def finalize(args: argparse.Namespace) -> None:
         dataset_id = str(group["dataset_id"])
         requested = int(group["requested_rows"])
         expected_types = set(map(str, group.get("anomaly_types", [group["anomaly_type"]])))
-        raw = run / "generation" / dataset_id / "raw"
-        searched = run / "generation" / dataset_id / "searched"
+        raw = run / dataset_id / "raw"
+        searched = run / dataset_id / "searched"
         raw_count = _csv_count(raw / "texture_ft_generation_result.csv")
         blocked = _blocked_count(raw / "guardrail_blocked.csv")
         if raw_count + blocked != requested:
@@ -209,15 +227,12 @@ def finalize(args: argparse.Namespace) -> None:
     _write_json(collapsed_path, collapsed)
 
     summary = {
-        "schema_version": 1,
-        "phase": "synthetic_data_generation",
+        "schema_version": 2,
+        "phase": "anomalygen_next_generation",
         "status": "COMPLETE",
         "source_tag": input_manifest["source_tag"],
-        "training_eligible": input_manifest["training_eligible"],
-        "input_manifest": str(manifest_path),
-        "input_manifest_sha256": _sha256(manifest_path),
-        "phase1_manifest": str(manifest_path),
-        "phase1_manifest_sha256": _sha256(manifest_path),
+        "prepared_inputs_manifest": str(manifest_path),
+        "prepared_inputs_manifest_sha256": _sha256(manifest_path),
         "groups": generation_status,
         "requested_rows": sum(row["requested"] for row in generation_status),
         "generated_images": sum(row["generated"] for row in generation_status),
@@ -251,7 +266,7 @@ def _write_report(
     page = f"""<!doctype html>
 <html><head><meta charset="utf-8"><title>AnomalyGenNext OD defects</title></head>
 <body><h1>AnomalyGenNext OD defects</h1>
-<p>Frozen input SHA-256: <code>{summary['input_manifest_sha256']}</code></p>
+<p>Prepared-input SHA-256: <code>{summary['prepared_inputs_manifest_sha256']}</code></p>
 <p>Generated {summary['generated_images']} images with {summary['annotations']} annotations.</p>
 <table><thead><tr><th>Dataset</th><th>Anomaly types</th><th>Generated/requested</th><th>Annotations</th><th>Blocked</th></tr></thead><tbody>{rows}</tbody></table>
 </body></html>"""

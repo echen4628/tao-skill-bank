@@ -33,9 +33,9 @@ class GenerateOdDefectsTest(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.inputs = self.root / "inputs"
         self.run = self.root / "run"
-        phase = self.inputs / "phase1"
-        testcase = phase / "anomalygen_inputs" / "toy" / "testcase.jsonl"
-        provenance = phase / "anomalygen_inputs" / "toy" / "provenance.jsonl"
+        prepared = self.inputs / "prepared_anomalygennext_inputs"
+        testcase = prepared / "anomalygen_inputs" / "toy" / "testcase.jsonl"
+        provenance = prepared / "anomalygen_inputs" / "toy" / "provenance.jsonl"
         testcase.parent.mkdir(parents=True)
         testcase.write_text('{}\n{}\n')
         provenance.write_text('{}\n{}\n')
@@ -52,25 +52,24 @@ class GenerateOdDefectsTest(unittest.TestCase):
                 "requested_rows": 2,
             }
         ]
-        plan_path = phase / "phase2_plan.json"
+        plan_path = prepared / "anomalygen_next_generation_plan.json"
         generator._write_json(plan_path, self.plan)
         artifacts = [
             {"path": str(path), "sha256": generator._sha256(path), "bytes": path.stat().st_size}
             for path in (testcase, provenance, plan_path)
         ]
         generator._write_json(
-            phase / "phase1_manifest.json",
+            prepared / "prepared_inputs_manifest.json",
             {
                 "status": "COMPLETE",
-                "phase2_ready": True,
+                "generation_ready": True,
                 "generator_row_count": 2,
                 "source_tag": "test_fixture",
-                "training_eligible": True,
                 "artifacts": artifacts,
             },
         )
-        self.raw = self.run / "generation" / "toy" / "raw"
-        self.searched = self.run / "generation" / "toy" / "searched"
+        self.raw = self.run / "toy" / "raw"
+        self.searched = self.run / "toy" / "searched"
         self.raw.mkdir(parents=True)
         (self.raw / "texture_ft_generation_result.csv").write_text(
             "output_filename\nout0.png\nout1.png\n"
@@ -127,7 +126,6 @@ class GenerateOdDefectsTest(unittest.TestCase):
         self.assertEqual(summary["generated_images"], 2)
         self.assertEqual(summary["pseudo_labeled_images"], 2)
         self.assertEqual(summary["native_categories"], ["toy_widget+scratch"])
-        self.assertTrue(summary["training_eligible"])
         self.assertFalse(summary["training_pool_mutated"])
 
     def test_finalize_rejects_missing_pseudo_labeled_image(self) -> None:

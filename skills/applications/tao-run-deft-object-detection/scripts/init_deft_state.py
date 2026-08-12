@@ -440,11 +440,6 @@ def main() -> int:
                                 "when provided, --anomalygen-config-template.source_tag must be "
                                 "a non-empty provenance label"
                             )
-                        elif anomaly_config.get("training_eligible") is not True:
-                            errors.append(
-                                "AnomalyGenNext data can enter the training loop only when the "
-                                "frozen config sets training_eligible=true"
-                            )
                         else:
                             for key in ("split_root", "pool_dataset_root", "defect_spec"):
                                 raw = anomaly_config.get(key)
@@ -457,6 +452,37 @@ def main() -> int:
                                 kind = "file" if key == "defect_spec" else "dir"
                                 if problem := check_artifact(str(path), kind):
                                     errors.append(f"AnomalyGenNext {key}: {problem}")
+                            defect_spec_raw = anomaly_config.get("defect_spec")
+                            if defect_spec_raw:
+                                defect_spec_path = _abs(str(defect_spec_raw))
+                                if defect_spec_path.is_file():
+                                    try:
+                                        defect_rows = [
+                                            json.loads(line)
+                                            for line in defect_spec_path.read_text(
+                                                encoding="utf-8"
+                                            ).splitlines()
+                                            if line.strip()
+                                        ]
+                                    except (OSError, json.JSONDecodeError) as exc:
+                                        errors.append(
+                                            f"AnomalyGenNext defect_spec is unreadable JSONL: {exc}"
+                                        )
+                                    else:
+                                        missing_prompts = sorted(
+                                            str(row.get("defect_type", "<unknown>"))
+                                            for row in defect_rows
+                                            if row.get("spatial_dependency") == "text"
+                                            and not str(
+                                                row.get("roi_prompt_defect_location", "")
+                                            ).strip()
+                                        )
+                                        if missing_prompts:
+                                            errors.append(
+                                                "AnomalyGenNext text-routed defect types require "
+                                                "roi_prompt_defect_location: "
+                                                f"{missing_prompts}"
+                                            )
                             datasets = anomaly_config.get("datasets")
                             if not isinstance(datasets, dict) or not datasets:
                                 errors.append(

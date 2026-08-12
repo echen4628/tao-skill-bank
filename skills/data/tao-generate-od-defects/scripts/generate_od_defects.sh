@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-# Generate and pseudo-label an OD defect dataset from frozen AnomalyGenNext inputs.
+# Run AnomalyGenNext inference and pseudo-label an OD defect dataset.
 
 set -Eeuo pipefail
 set -o pipefail
@@ -11,23 +11,22 @@ usage() {
 Usage: generate_od_defects.sh [options]
 
 Required (flag or same-named environment variable):
-  --inputs-dir PATH          Completed tao-prepare-anomalygen-inputs root (PHASE1_ROOT)
+  --inputs-dir PATH          Completed tao-prepare-anomalygennext-inputs root (PREPARED_INPUTS_ROOT)
   --output-dir PATH          New generation run directory (RUN_ROOT)
 
 Optional:
-  --datasets IDS             Comma-separated frozen dataset ids (PHASE2_DATASETS)
+  --datasets IDS             Comma-separated frozen dataset ids (GENERATION_DATASETS)
   --num-gpus N               Visible GPUs used by torchrun; default 1 (NUM_GPUS)
   --anomalygen-repo PATH     AnomalyGenNext checkout (ANOMALYGEN_REPO)
   --activate PATH            Environment activation script (ANOMALYGEN_ACTIVATE)
   --python PATH              Python with AnomalyGenNext deps (ANOMALYGEN_PYTHON)
   --base-checkpoint PATH     Cosmos3-Nano base DCP (BASE_CHECKPOINT)
-  --defect-spec PATH         Placement snapshot for per-image timing groups (DEFECT_SPEC_SNAPSHOT)
   --uv-bin-dir PATH          Directory containing uv (UV_BIN_DIR)
   --pipeline-py PATH         Generation implementation; defaults beside this script (PIPELINE_PY)
   --hf-cache PATH            AnomalyGenNext HF cache (ANOMALYGEN_HF_CACHE)
   --job-id ID                Audit label; defaults to output basename (JOB_ID)
   --resume-existing-generation
-                             Reuse a completed raw generation bucket and continue timing/eval/labels
+                             Reuse completed raw generation and continue eval/labels
   -h, --help                 Show this help
 
 The script validates every frozen input SHA-256 before generation. Run it
@@ -37,15 +36,14 @@ EOF
 
 while (($#)); do
   case "$1" in
-    --inputs-dir|--phase1-dir) PHASE1_ROOT=${2:?missing value for --inputs-dir}; shift 2 ;;
+    --inputs-dir) PREPARED_INPUTS_ROOT=${2:?missing value for --inputs-dir}; shift 2 ;;
     --output-dir) RUN_ROOT=${2:?missing value for --output-dir}; shift 2 ;;
-    --datasets) PHASE2_DATASETS=${2:?missing value for --datasets}; shift 2 ;;
+    --datasets) GENERATION_DATASETS=${2:?missing value for --datasets}; shift 2 ;;
     --num-gpus) NUM_GPUS=${2:?missing value for --num-gpus}; shift 2 ;;
     --anomalygen-repo) ANOMALYGEN_REPO=${2:?missing value for --anomalygen-repo}; shift 2 ;;
     --activate) ANOMALYGEN_ACTIVATE=${2:?missing value for --activate}; shift 2 ;;
     --python) ANOMALYGEN_PYTHON=${2:?missing value for --python}; shift 2 ;;
     --base-checkpoint) BASE_CHECKPOINT=${2:?missing value for --base-checkpoint}; shift 2 ;;
-    --defect-spec) DEFECT_SPEC_SNAPSHOT=${2:?missing value for --defect-spec}; shift 2 ;;
     --uv-bin-dir) UV_BIN_DIR=${2:?missing value for --uv-bin-dir}; shift 2 ;;
     --pipeline-py) PIPELINE_PY=${2:?missing value for --pipeline-py}; shift 2 ;;
     --hf-cache) ANOMALYGEN_HF_CACHE=${2:?missing value for --hf-cache}; shift 2 ;;
@@ -58,14 +56,14 @@ done
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 RUN_ROOT=${RUN_ROOT:?RUN_ROOT or --output-dir must be set}
-PHASE1_ROOT=${PHASE1_ROOT:?PHASE1_ROOT or --inputs-dir must be set}
+PREPARED_INPUTS_ROOT=${PREPARED_INPUTS_ROOT:?PREPARED_INPUTS_ROOT or --inputs-dir must be set}
 ANOMALYGEN_REPO=${ANOMALYGEN_REPO:?ANOMALYGEN_REPO or --anomalygen-repo must be set}
 ANOMALYGEN_ACTIVATE=${ANOMALYGEN_ACTIVATE:-$ANOMALYGEN_REPO/.venv/bin/activate}
 PIPELINE_PY=${PIPELINE_PY:-$SCRIPT_DIR/generate_od_defects.py}
 BASE_CHECKPOINT=${BASE_CHECKPOINT:-$ANOMALYGEN_REPO/checkpoints/Cosmos3-Nano/model}
 ANOMALYGEN_HF_CACHE=${ANOMALYGEN_HF_CACHE:-$(dirname "$ANOMALYGEN_REPO")/hf_cache}
 NUM_GPUS=${NUM_GPUS:-1}
-PHASE2_DATASETS=${PHASE2_DATASETS:-}
+GENERATION_DATASETS=${GENERATION_DATASETS:-}
 JOB_ID=${JOB_ID:-$(basename "$RUN_ROOT")}
 RESUME_EXISTING_GENERATION=${RESUME_EXISTING_GENERATION:-0}
 
@@ -73,14 +71,21 @@ case "$NUM_GPUS" in
   ''|*[!0-9]*|0) echo "NUM_GPUS must be a positive integer" >&2; exit 2 ;;
 esac
 
-test -d "$PHASE1_ROOT"
+test -d "$PREPARED_INPUTS_ROOT"
 test -f "$PIPELINE_PY"
 test -d "$ANOMALYGEN_REPO"
 test -f "$ANOMALYGEN_ACTIVATE"
 test -e "$BASE_CHECKPOINT"
-if [ -n "${DEFECT_SPEC_SNAPSHOT:-}" ]; then
-  test -f "$DEFECT_SPEC_SNAPSHOT"
-  test -f "$SCRIPT_DIR/analyze_generation_timing.py"
+
+if [ -e "$RUN_ROOT" ]; then
+  if [ "$RESUME_EXISTING_GENERATION" -ne 1 ]; then
+    echo "refusing to overwrite existing generation directory: $RUN_ROOT" >&2
+    exit 2
+  fi
+  test -d "$RUN_ROOT"
+elif [ "$RESUME_EXISTING_GENERATION" -eq 1 ]; then
+  echo "--resume-existing-generation requires an existing output directory: $RUN_ROOT" >&2
+  exit 2
 fi
 
 STATUS_FILE="$RUN_ROOT/status.json"
@@ -97,7 +102,7 @@ write_status() {
   exit "$rc"
 }
 
-mkdir -p "$RUN_ROOT" "$LOG_DIR" "$RUN_ROOT/generation"
+mkdir -p "$RUN_ROOT" "$LOG_DIR"
 source "$ANOMALYGEN_ACTIVATE"
 ANOMALYGEN_PYTHON=${ANOMALYGEN_PYTHON:-$(command -v python)}
 test -x "$ANOMALYGEN_PYTHON"
@@ -124,30 +129,30 @@ export PYTHONDONTWRITEBYTECODE=1
 export HF_HOME="$ANOMALYGEN_HF_CACHE"
 trap write_status EXIT
 
-echo "phase=synthetic_data_generation"
+echo "phase=anomalygen_next_generation"
 echo "job_id=$JOB_ID"
 echo "run_root=$RUN_ROOT"
-echo "phase1_root=$PHASE1_ROOT"
+echo "prepared_inputs_root=$PREPARED_INPUTS_ROOT"
 echo "num_gpus=$NUM_GPUS"
 echo "started=$(date --iso-8601=seconds)"
 nvidia-smi --query-gpu=index,name,memory.total,driver_version --format=csv,noheader
 
 "$ANOMALYGEN_PYTHON" "$PIPELINE_PY" validate-inputs \
-  --inputs-dir "$PHASE1_ROOT" 2>&1 | tee "$LOG_DIR/validate_inputs.log"
-plan_args=(--inputs-dir "$PHASE1_ROOT")
-finalize_args=(--inputs-dir "$PHASE1_ROOT" --run-root "$RUN_ROOT")
-if [ -n "$PHASE2_DATASETS" ]; then
-  plan_args+=(--datasets "$PHASE2_DATASETS")
-  finalize_args+=(--datasets "$PHASE2_DATASETS")
+  --inputs-dir "$PREPARED_INPUTS_ROOT" 2>&1 | tee "$LOG_DIR/validate_inputs.log"
+plan_args=(--inputs-dir "$PREPARED_INPUTS_ROOT")
+finalize_args=(--inputs-dir "$PREPARED_INPUTS_ROOT" --run-root "$RUN_ROOT")
+if [ -n "$GENERATION_DATASETS" ]; then
+  plan_args+=(--datasets "$GENERATION_DATASETS")
+  finalize_args+=(--datasets "$GENERATION_DATASETS")
 fi
 "$ANOMALYGEN_PYTHON" "$PIPELINE_PY" emit-plan \
-  "${plan_args[@]}" > "$RUN_ROOT/phase2_plan.tsv"
-test -s "$RUN_ROOT/phase2_plan.tsv"
+  "${plan_args[@]}" > "$RUN_ROOT/anomalygen_next_generation_plan.tsv"
+test -s "$RUN_ROOT/anomalygen_next_generation_plan.tsv"
 
 while IFS=$'\t' read -r dataset_id anomaly_types_csv testcase provenance checkpoint recipe real_root requested; do
   test -n "$dataset_id"
   IFS=',' read -r -a anomaly_types <<< "$anomaly_types_csv"
-  group="$RUN_ROOT/generation/$dataset_id"
+  group="$RUN_ROOT/$dataset_id"
   raw="$group/raw"
   searched="$group/searched"
   rounds="$group/rounds"
@@ -163,17 +168,6 @@ while IFS=$'\t' read -r dataset_id anomaly_types_csv testcase provenance checkpo
       --base_checkpoint "$BASE_CHECKPOINT" \
       --input_data_path "$testcase" --output_dir "$raw" \
       2>&1 | tee "$LOG_DIR/generation_${dataset_id}.log"
-  fi
-
-  if [ -n "${DEFECT_SPEC_SNAPSHOT:-}" ]; then
-    "$ANOMALYGEN_PYTHON" "$SCRIPT_DIR/analyze_generation_timing.py" \
-      --generation-log "$LOG_DIR/generation_${dataset_id}.log" \
-      --generation-csv "$raw/texture_ft_generation_result.csv" \
-      --provenance-jsonl "$provenance" \
-      --defect-spec "$DEFECT_SPEC_SNAPSHOT" \
-      --output-csv "$group/timing/per_image.csv" \
-      --output-summary "$group/timing/summary.json" \
-      2>&1 | tee "$LOG_DIR/timing_${dataset_id}.log"
   fi
 
   "$ANOMALYGEN_PYTHON" "$ANOMALYGEN_REPO/anomalygen/scripts/texture/evaluate.py" \
@@ -195,10 +189,10 @@ while IFS=$'\t' read -r dataset_id anomaly_types_csv testcase provenance checkpo
     --gen_root "$searched" --output_dir "$searched/pseudo_labels" --no_caption \
     2>&1 | tee "$LOG_DIR/pseudo_label_${dataset_id}.log"
   test -s "$searched/pseudo_labels/coco_annotations.json"
-done < "$RUN_ROOT/phase2_plan.tsv"
+done < "$RUN_ROOT/anomalygen_next_generation_plan.tsv"
 
 "$ANOMALYGEN_PYTHON" "$PIPELINE_PY" finalize \
   "${finalize_args[@]}" \
-  2>&1 | tee "$LOG_DIR/finalize_phase2.log"
+  2>&1 | tee "$LOG_DIR/finalize_generation.log"
 test -s "$RUN_ROOT/validation_summary.json"
 echo "completed=$(date --iso-8601=seconds)"

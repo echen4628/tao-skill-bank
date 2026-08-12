@@ -131,11 +131,11 @@ def merge(args: argparse.Namespace) -> None:
         base_html,
         count=1,
     )
-    extra_sha = args.addition_phase1_sha256
+    extra_sha = args.addition_prepared_inputs_sha256
     addition_label = args.addition_label or namespace
     base_html = base_html.replace(
         "<br><b>Training pool mutated:</b>",
-        f"<br><b>{addition_label} Phase 1 SHA-256:</b> <code>{extra_sha}</code>"
+        f"<br><b>{addition_label} prepared-input SHA-256:</b> <code>{extra_sha}</code>"
         "<br><b>Training pool mutated:</b>",
         1,
     )
@@ -153,7 +153,7 @@ def main() -> None:
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--asset-namespace", required=True)
     parser.add_argument("--addition-annotations", type=int, required=True)
-    parser.add_argument("--addition-phase1-sha256", required=True)
+    parser.add_argument("--addition-prepared-inputs-sha256", required=True)
     parser.add_argument("--addition-requested", type=int)
     parser.add_argument("--addition-generated", type=int)
     parser.add_argument("--addition-blocked", type=int, default=0)
