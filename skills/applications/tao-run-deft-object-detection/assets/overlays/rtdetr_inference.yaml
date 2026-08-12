@@ -1,0 +1,8 @@
+# RT-DETR inference settings fixed by the DEFT loop. Run-specific paths,
+# checkpoint, class contract, and GPU shape are applied separately.
+
+inference.conf_threshold: 0.0
+inference.input_width: 640
+inference.input_height: 640
+dataset.batch_size: 4
+

@@ -7,13 +7,14 @@ The loop trains on your detection data. It cannot fabricate or download any of t
 | Path | What it is |
 |---|---|
 | `specs/train_grounding_dino.yaml` | Grounding DINO train-spec template. `dataset.train_data_sources` must be a **list**; the loop appends mined ODVG and, when enabled, synthetic ODVG each iteration. Also the source of truth for backbone, image size, and `train.optim`. |
-| `checkpoints/zero_shot.pth` | Pretrained / zero-shot Grounding DINO checkpoint. The baseline scores this without training, so it is required. |
-| `specs/inference_gdino.yaml` | Inference spec template. Supplies `dataset.infer_data_sources` and `inference.conf_threshold`. |
+| `specs/train_rtdetr.yaml` | RT-DETR alternative: matching train template with list-shaped COCO sources and checkpoint-compatible model geometry. |
+| `checkpoints/base.pth` | Base checkpoint scored at baseline and fine-tuned from each iteration. RT-DETR requires a target-compatible head. |
 | `kpi/images/` | KPI evaluation images. Must not be referenced with a trailing slash — `kpi_analyze` derives its sequence name from the second-to-last path component. |
 | `kpi/labels/` | KPI ground truth, KITTI `.txt` per image. |
 | `kpi/mapping.yaml` | Class mapping for `kpi_analyze`: a YAML list of single-key dicts, e.g. `- car: car`. |
 | `source_pool/source_embeddings.parquet` | Pre-embedded candidate pool. Columns `filepath` + `embedding`. Must be non-empty. |
-| `source_pool/odvg/` | ODVG annotations for the pool: `*.jsonl` keyed by `file_name`, plus ideally `labelmap.json`. |
+| `source_pool/odvg/` | Shared staging/audit annotations: `*.jsonl` keyed by `file_name`, plus ideally `labelmap.json`. Grounding DINO trains from these. |
+| `source_pool/coco.json` | Prepared-pool COCO. Required for RT-DETR training/staging and for class-stratified mining. |
 | `kpi/coco.json` | COCO detections for the KPI set. Required only for `class_stratified` mining — this one you do supply, since it describes your evaluation set. |
 | Session environment | `NGC_KEY` for `nvcr.io` pulls. `HF_TOKEN` only if the encoder resolves to a HuggingFace id rather than a local snapshot. |
 
@@ -21,9 +22,9 @@ The loop trains on your detection data. It cannot fabricate or download any of t
 
 | Path | What |
 |---|---|
-| `base/images/` + `base/odvg/` | Seed training set, referenced by `dataset.train_data_sources` in the train-spec template. |
+| `base/images/` + `base/odvg/` or `base/coco.json` | Detector-native seed training set referenced by the train template. |
 
-**This is optional, and that is a deliberate difference from the AOI loop.** AOI requires a seed training set because ChangeNet has to learn the task from scratch. Grounding DINO is zero-shot capable, so this loop can start cold:
+**This is optional, and that is a deliberate difference from the AOI loop.** The loop can start with no seed source because it always has a supplied base checkpoint:
 
 - Template already lists base sources → Pre-Flight validates they resolve; iteration 1 appends mined data to them.
 - Template's `train_data_sources` is empty → iteration 1 trains on mined data alone. Not an error, but the first iteration's dataset will be small.
@@ -42,8 +43,8 @@ If the user arrives without a workspace, explain what they must supply and offer
 <workspace>/
 ├── specs/
 │   ├── train_grounding_dino.yaml
-│   └── inference_gdino.yaml
-├── checkpoints/zero_shot.pth
+│   └── train_rtdetr.yaml           # alternative detector template
+├── checkpoints/base.pth
 ├── kpi/
 │   ├── images/
 │   ├── labels/                     # KITTI ground truth
@@ -60,7 +61,7 @@ If the user arrives without a workspace, explain what they must supply and offer
 └── results/run_<YYYYMMDD_HHMMSS>/  # created by this workflow
 ```
 
-## Annotation formats — three, each with its own job
+## Annotation formats — each has one job
 
 This loop legitimately uses three annotation representations. They are not interchangeable, and the same format is spelled differently by different stages.
 
@@ -68,7 +69,8 @@ This loop legitimately uses three annotation representations. They are not inter
 |---|---|---|
 | **KITTI** `.txt` | `kpi/labels/`, and everything TAO inference writes to `inference/labels/` | `gap_analysis` (`input_format: kitti`, lowercase) and `kpi_analyze` (`input_format: KITTI`, uppercase) |
 | **ODVG** `.jsonl` + `labelmap.json` | `source_pool/odvg/`, and the staged `iter${N}/tmm/annotations/` | Grounding DINO **training** |
-| **COCO** `.json` | `source_pool/coco.json` (prep-generated), `kpi/coco.json` (yours) | `class_stratified` mining only (`detection_format: coco`) |
+| **COCO** `.json` | `source_pool/coco.json`, staged `tmm_coco.json`, optional synthetic COCO, `kpi/coco.json` | RT-DETR training; class-stratified mining |
+| **Classmap** `.txt` | `results/.../rtdetr_classmap.txt` | RT-DETR inference; names ordered by frozen COCO category id |
 
 ### KITTI inference line
 
@@ -93,10 +95,11 @@ One JSON object per line:
 
 ## Source pool
 
-Two artifacts must stay in sync — the embedding parquet and the ODVG tree:
+The embedding parquet, ODVG tree, and prepared COCO must stay in sync:
 
 - Mining selects rows from `source_embeddings.parquet` by `filepath`.
 - Staging then looks up each selected image's annotation by **basename** under `source_pool/odvg/`.
+- RT-DETR staging performs the same basename lookup in `source_pool/coco.json` and preserves its category ids.
 
 An image present in the parquet but absent from the ODVG tree is copied and then reported as a missing annotation; it never reaches training. `stage_mined_odvg.py` reports that count, and `--min-success-rate` can turn a large gap into a hard failure.
 

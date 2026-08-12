@@ -1,0 +1,42 @@
+# Default RT-DETR train spec for the DEFT OD loop.
+#
+# The model block matches TAO's ResNet-50 defaults. A user-supplied base
+# checkpoint with another backbone or geometry must come with a matching
+# --train-spec-template; Pre-Flight compares the pair before launch.
+# Dataset sources and the exact category-id contract are filled by
+# update_train_spec.py on every iteration.
+
+train:
+  num_gpus: 1
+  gpu_ids: [0]
+  num_nodes: 1
+  num_epochs: 20
+  checkpoint_interval: 1
+  validation_interval: 1
+  # Keep TAO's hardware-portable default. Users may opt into bf16 only after
+  # confirming that the selected GPU supports it.
+  precision: fp32
+  enable_ema: false
+  pretrained_model_path: ''
+  resume_training_checkpoint_path: ''
+  optim:
+    lr: 1.0e-4
+    lr_backbone: 1.0e-5
+    optimizer: AdamW
+    weight_decay: 1.0e-4
+
+dataset:
+  train_data_sources: []
+  batch_size: 4
+  workers: 8
+  remap_mscoco_category: false
+  augmentation:
+    train_spatial_size: [640, 640]
+    eval_spatial_size: [640, 640]
+
+model:
+  backbone: resnet_50
+  num_queries: 300
+  num_select: 300
+  num_feature_levels: 3
+  return_interm_indices: [1, 2, 3]

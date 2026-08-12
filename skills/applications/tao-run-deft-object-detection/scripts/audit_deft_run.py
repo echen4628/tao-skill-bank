@@ -81,8 +81,6 @@ STAGE_OVERLAYS = {
     "embed": "references/tao-generate-image-embeddings.md",
     "mine": "references/tao-mine-od-images.md",
     "stage": "references/stage-mined-data.md",
-    "train": "references/grounding-dino.md",
-    "inference": "references/grounding-dino.md",
     "kpi_analyze": "references/tao-analyze-detection-kpi.md",
 }
 
@@ -104,6 +102,9 @@ EXTRA_ARTIFACT_FIELDS: dict[str, tuple[str, str]] = {
     "combined_manifest": ("--combined-manifest", "file"),
     # stage: post-merge consistency report
     "merge_validation_report": ("--merge-validation-report", "file"),
+    # RT-DETR-native stage outputs. Grounding DINO continues to commit ODVG.
+    "staged_coco": ("--staged-coco", "file"),
+    "inference_classmap": ("--inference-classmap", "file"),
     # optional AnomalyGenNext producer admitted during the iteration's stage boundary
     "synthetic_validation_summary": ("--synthetic-validation-summary", "file"),
     "synthetic_coco": ("--synthetic-coco", "file"),
@@ -137,6 +138,18 @@ def _phase_sort_key(phase: str) -> tuple[int, int]:
         return (1, 0)
     number = iter_number(phase)
     return (2, number) if number is not None else (3, 0)
+
+
+def _overlay_for(next_action: str, state: dict[str, Any]) -> str:
+    if next_action in {"train", "inference"}:
+        config = state.get("config")
+        config = config if isinstance(config, dict) else {}
+        return (
+            "references/rtdetr.md"
+            if config.get("detector") == "rtdetr"
+            else "references/grounding-dino.md"
+        )
+    return STAGE_OVERLAYS.get(next_action, "none")
 
 
 def _is_int(value: Any) -> bool:
@@ -413,6 +426,69 @@ def audit(results_dir: Path) -> dict[str, Any]:
             )
         max_iterations = None
 
+    run_config = state.get("config")
+    run_config = run_config if isinstance(run_config, dict) else {}
+    detector = run_config.get("detector", "grounding_dino")
+    if detector not in {"grounding_dino", "rtdetr"}:
+        errors.append(
+            f"state.config.detector={detector!r} is invalid; expected grounding_dino or rtdetr"
+        )
+    if detector == "rtdetr":
+        classmap = run_config.get("inference_classmap")
+        category_ids = run_config.get("rtdetr_category_ids")
+        num_classes = run_config.get("rtdetr_num_classes")
+        class_names = run_config.get("rtdetr_class_names")
+        if not classmap:
+            errors.append("state.config.inference_classmap is required for detector=rtdetr")
+        elif not Path(str(classmap)).is_absolute():
+            errors.append(f"state.config.inference_classmap must be absolute: {classmap}")
+        elif check_artifact(str(classmap), "file"):
+            errors.append(f"state.config.inference_classmap is not a file: {classmap}")
+        else:
+            try:
+                classmap_names = Path(str(classmap)).read_text(encoding="utf-8").splitlines()
+            except OSError as exc:
+                errors.append(f"state.config.inference_classmap is unreadable: {exc}")
+            else:
+                if classmap_names != class_names:
+                    errors.append(
+                        "state.config.inference_classmap contents differ from the frozen "
+                        f"rtdetr_class_names: classmap={classmap_names}, names={class_names!r}"
+                    )
+        if not (
+            isinstance(category_ids, list)
+            and category_ids
+            and all(_is_int(value) for value in category_ids)
+        ):
+            errors.append(
+                "state.config.rtdetr_category_ids must be a non-empty integer list"
+            )
+        else:
+            expected_ids = (
+                list(range(len(category_ids))),
+                list(range(1, len(category_ids) + 1)),
+            )
+            if category_ids not in expected_ids:
+                errors.append(
+                    "state.config.rtdetr_category_ids must be dense 0..N-1 or 1..N; "
+                    f"got {category_ids}"
+                )
+            if not _is_int(num_classes) or num_classes != max(category_ids) + 1:
+                errors.append(
+                    "state.config.rtdetr_num_classes must equal max(category_id)+1; "
+                    f"ids={category_ids}, num_classes={num_classes!r}"
+                )
+            if not (
+                isinstance(class_names, list)
+                and len(class_names) == len(category_ids)
+                and all(isinstance(value, str) and value for value in class_names)
+                and len(set(class_names)) == len(class_names)
+            ):
+                errors.append(
+                    "state.config.rtdetr_class_names must contain one unique non-empty "
+                    "name per frozen category id"
+                )
+
     current_iteration = state.get("current_iteration")
     if current_iteration is not None and (
         not _is_int(current_iteration) or current_iteration < 0
@@ -628,15 +704,65 @@ def audit(results_dir: Path) -> dict[str, Any]:
     # the frozen run config makes them mandatory for this particular run.
     config = state.get("config")
     config = config if isinstance(config, dict) else {}
+    if config.get("detector") == "rtdetr":
+        for phase in sorted(iterations, key=_phase_sort_key):
+            if iter_number(phase) is None or "stage" not in ok_stages_by_phase.get(phase, []):
+                continue
+            info = iterations.get(phase)
+            if not isinstance(info, dict):
+                continue
+            missing = [
+                field
+                for field in ("staged_coco", "inference_classmap")
+                if not info.get(field)
+            ]
+            if missing:
+                errors.append(
+                    f"{phase}/stage completed for detector=rtdetr but did not record "
+                    f"RT-DETR artifacts: {missing}"
+                )
+                continue
+            try:
+                frozen_classmap = Path(str(config["inference_classmap"])).read_bytes()
+                staged_classmap = Path(str(info["inference_classmap"])).read_bytes()
+                staged_payload = json.loads(
+                    Path(str(info["staged_coco"])).read_text(encoding="utf-8")
+                )
+                staged_categories = sorted(
+                    staged_payload.get("categories", []), key=lambda row: row.get("id")
+                )
+                staged_ids = [row.get("id") for row in staged_categories]
+            except (OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+                errors.append(f"{phase}/stage RT-DETR class contract is unreadable: {exc}")
+                continue
+            if staged_classmap != frozen_classmap:
+                errors.append(
+                    f"{phase}/stage RT-DETR classmap differs from the run-level frozen classmap"
+                )
+            if staged_ids != config.get("rtdetr_category_ids"):
+                errors.append(
+                    f"{phase}/stage RT-DETR COCO category ids {staged_ids} differ from "
+                    f"frozen ids {config.get('rtdetr_category_ids')}"
+                )
+            if "train" in ok_stages_by_phase.get(phase, []):
+                try:
+                    spec_text = Path(str(info["training_spec"])).read_text(encoding="utf-8")
+                except (OSError, KeyError) as exc:
+                    errors.append(f"{phase}/train RT-DETR spec is unreadable: {exc}")
+                else:
+                    if str(info["staged_coco"]) not in spec_text:
+                        errors.append(
+                            f"{phase}/train RT-DETR spec omits the current staged COCO source"
+                        )
     if config.get("anomalygen_enabled") is True:
-        synthetic_fields = (
+        synthetic_fields = [
             "synthetic_validation_summary",
             "synthetic_coco",
-            "synthetic_odvg",
-            "synthetic_label_map",
             "synthetic_images_dir",
             "synthetic_staging_report",
-        )
+        ]
+        if config.get("detector") != "rtdetr":
+            synthetic_fields.extend(("synthetic_odvg", "synthetic_label_map"))
         for phase in sorted(iterations, key=_phase_sort_key):
             if iter_number(phase) is None or "stage" not in ok_stages_by_phase.get(phase, []):
                 continue
@@ -680,11 +806,16 @@ def audit(results_dir: Path) -> dict[str, Any]:
                 except OSError as exc:
                     errors.append(f"{phase}/train spec is unreadable: {exc}")
                 else:
-                    expected = (
-                        str(info["synthetic_images_dir"]),
-                        str(info["synthetic_odvg"]),
-                        str(info["synthetic_label_map"]),
-                    )
+                    expected = [str(info["synthetic_images_dir"])]
+                    if config.get("detector") == "rtdetr":
+                        expected.append(str(info["synthetic_coco"]))
+                    else:
+                        expected.extend(
+                            (
+                                str(info["synthetic_odvg"]),
+                                str(info["synthetic_label_map"]),
+                            )
+                        )
                     absent = [value for value in expected if value not in spec_text]
                     if absent:
                         errors.append(
@@ -833,7 +964,7 @@ def audit(results_dir: Path) -> dict[str, Any]:
         "last_status": last_event.get("status") if last_event else None,
         "stage_completed_by_phase": completed_by_phase,
         "next_action": next_action,
-        "read_before_action": STAGE_OVERLAYS.get(next_action, "none"),
+        "read_before_action": _overlay_for(next_action, state),
         "terminal": terminal,
         "loop_stop_committed": loop_stop_committed,
         "run_failed": run_failed,

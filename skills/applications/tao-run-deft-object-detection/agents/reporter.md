@@ -58,7 +58,7 @@ Take **Status** from the audit's `--json` report, never from prose and never fro
 
 **Status:** IN PROGRESS | STOPPED (INCOMPLETE) | COMPLETE | FAILED
 **Iterations completed:** N / max_iterations
-**Model:** Grounding DINO (ODVG)
+**Model:** <config.detector> (<config.training_annotation_format>)
 **Generated:** <UTC timestamp>
 
 ## 1. KPI Trend

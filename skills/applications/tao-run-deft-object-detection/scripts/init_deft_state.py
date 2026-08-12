@@ -46,6 +46,7 @@ from deft_stages import (  # noqa: E402
 )
 
 ALLOCATION_POLICIES = ("global", "class_stratified")
+DETECTORS = ("grounding_dino", "rtdetr")
 
 # AP50 gates from the reference ITS pipeline, used when the caller does not supply
 # their own. The asymmetry is deliberate: `car` is abundant and already well learned,
@@ -91,6 +92,53 @@ def _archive(path: Path, stamp: str) -> Path | None:
     return backup
 
 
+def _load_rtdetr_class_contract(
+    coco_path: Path, target_classes: list[str]
+) -> tuple[list[int], int, list[str]]:
+    """Resolve the class ids and classmap RT-DETR must keep for the whole run.
+
+    The prepared pool is the canonical labeled corpus. Requiring a dense zero- or
+    one-based category space avoids a classmap whose line positions disagree with
+    the checkpoint head while still supporting TAO's documented one-based custom
+    dataset convention (``num_classes=max(category_id)+1``).
+    """
+    try:
+        coco = json.loads(coco_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"RT-DETR source COCO is unreadable: {coco_path}: {exc}") from exc
+    categories = coco.get("categories")
+    if not isinstance(categories, list) or not categories:
+        raise ValueError(f"RT-DETR source COCO has no categories: {coco_path}")
+
+    ordered: list[tuple[int, str]] = []
+    for category in categories:
+        if not isinstance(category, dict):
+            raise ValueError("RT-DETR source COCO categories must be objects")
+        category_id = category.get("id")
+        name = str(category.get("name", "")).strip()
+        if isinstance(category_id, bool) or not isinstance(category_id, int) or not name:
+            raise ValueError(
+                "RT-DETR source COCO categories require integer id and non-empty name"
+            )
+        ordered.append((category_id, name))
+    ordered.sort()
+    ids = [category_id for category_id, _name in ordered]
+    names = [name for _category_id, name in ordered]
+    if len(ids) != len(set(ids)) or len(names) != len(set(names)):
+        raise ValueError("RT-DETR source COCO category ids and names must be unique")
+    if ids not in (list(range(len(ids))), list(range(1, len(ids) + 1))):
+        raise ValueError(
+            "RT-DETR DEFT requires dense category ids 0..N-1 or 1..N; "
+            f"the source COCO declares {ids}"
+        )
+    if set(names) != set(target_classes):
+        raise ValueError(
+            "RT-DETR source COCO categories must exactly match --target-classes; "
+            f"COCO={names}, targets={target_classes}"
+        )
+    return ids, max(ids) + 1, names
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
 
@@ -100,6 +148,12 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Workspace root. Mounted into every container as itself.")
     parser.add_argument("--max-iterations", type=int, required=True,
                         help="Number of iterations after the baseline. No default; the user supplies it.")
+    parser.add_argument(
+        "--detector",
+        choices=DETECTORS,
+        default="grounding_dino",
+        help="Detector used for baseline/train/inference. Frozen for the whole run.",
+    )
 
     parser.add_argument("--num-gpus", type=int, default=1)
     parser.add_argument("--num-epochs", type=int, required=True,
@@ -108,18 +162,17 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="train.optim.lr for every iteration (resolved in Pre-Flight).")
 
     parser.add_argument("--zero-shot-checkpoint", required=True,
-                        help="Checkpoint scored at baseline, and fine-tuned from on every "
-                             "iteration. Pre-Flight resolves this from NGC when the user "
-                             "supplies none (scripts/fetch_gdino_checkpoint.py).")
+                        help="Base checkpoint scored at baseline and fine-tuned from on every "
+                             "iteration. Grounding DINO Pre-Flight can resolve the published "
+                             "NGC checkpoint; RT-DETR requires a user-supplied task-compatible "
+                             "checkpoint.")
     parser.add_argument("--zero-shot-source", default="user",
                         help="Where the checkpoint came from — 'user' or an NGC version "
                              "string. Recorded so a resumed run can say which weights the "
                              "earlier iterations were measured against.")
     parser.add_argument("--train-spec-template", default=None,
-                        # Defaults to assets/train_grounding_dino.yaml. Every value in
-                        # it is one the reference already settled, and hand-authoring a
-                        # template is how log_scale/class_embed_bias get reintroduced.
-                        help="Grounding DINO train spec; dataset.train_data_sources must be a list.")
+                        help="Detector train spec; dataset.train_data_sources must be a list. "
+                             "Defaults to the detector-specific shipped template.")
 
     parser.add_argument("--pool-dir", default=None,
                         help="Prepared-pool directory. Derives --source-pool-embeddings, "
@@ -287,12 +340,14 @@ def main() -> int:
         results_dir = _abs(args.results_dir)
         workspace = _abs(args.workspace)
         zero_shot_checkpoint = _abs(args.zero_shot_checkpoint)
-        # No template supplied is the normal case: assets/train_grounding_dino.yaml
-        # already carries every value the reference settled, and hand-authoring one
-        # is how log_scale and class_embed_bias get reintroduced wrong.
+        default_spec_name = (
+            "train_grounding_dino.yaml"
+            if args.detector == "grounding_dino"
+            else "train_rtdetr.yaml"
+        )
         train_spec_template = _abs(
             args.train_spec_template
-            or Path(__file__).resolve().parent.parent / "assets" / "train_grounding_dino.yaml"
+            or Path(__file__).resolve().parent.parent / "assets" / default_spec_name
         )
         # A prepared pool has a fixed internal layout, so one directory determines
         # all four paths. Explicit flags still win, for a pool assembled by hand.
@@ -560,6 +615,12 @@ def main() -> int:
             "--source-detection-file": args.source_detection_file,
             "--target-detection-file": args.target_detection_file,
         }
+        if args.detector == "rtdetr" and not args.source_detection_file:
+            errors.append(
+                "--detector rtdetr requires --source-detection-file (the prepared pool "
+                "COCO); it is the canonical category-id contract and the source for mined "
+                "COCO staging"
+            )
         if args.allocation_policy == "class_stratified":
             if not rare_classes:
                 errors.append("--allocation-policy class_stratified requires --rare-class-list")
@@ -582,6 +643,22 @@ def main() -> int:
                 errors.append(f"{flag}: {problem}")
             elif path.suffix.lower() != ".json":
                 warnings.append(f"{flag}: {path} is not a .json file; mining needs COCO JSON")
+
+        rtdetr_category_ids: list[int] | None = None
+        rtdetr_num_classes: int | None = None
+        rtdetr_class_names: list[str] | None = None
+        source_coco_value = resolved_detection.get("--source-detection-file")
+        if args.detector == "rtdetr" and source_coco_value:
+            source_coco_path = Path(source_coco_value)
+            if source_coco_path.is_file():
+                try:
+                    (
+                        rtdetr_category_ids,
+                        rtdetr_num_classes,
+                        rtdetr_class_names,
+                    ) = _load_rtdetr_class_contract(source_coco_path, target_classes)
+                except ValueError as exc:
+                    errors.append(str(exc))
 
         # A local snapshot must be a directory; a bare HuggingFace id is left alone.
         model_path_raw = args.embedding_model_path
@@ -608,6 +685,8 @@ def main() -> int:
         # embedding_model_path is exempt: HF_HOME legitimately lives outside the workspace.
         mounted = [results_dir, zero_shot_checkpoint, train_spec_template, source_pool_embeddings,
                    source_pool_annotations, kpi_images_dir, ground_truth_labels_dir, class_mapping]
+        if resolved_detection.get("--source-detection-file"):
+            mounted.append(Path(str(resolved_detection["--source-detection-file"])))
         outside = [str(p) for p in mounted if not p.is_relative_to(workspace)]
         if outside:
             warnings.append(
@@ -632,6 +711,15 @@ def main() -> int:
         stamp = now.strftime("%Y%m%dT%H%M%SZ")
         results_dir.mkdir(parents=True, exist_ok=True)
 
+        inference_classmap: Path | None = None
+        if args.detector == "rtdetr":
+            if not rtdetr_class_names:
+                raise ValueError("RT-DETR class contract was not resolved from the source COCO")
+            inference_classmap = results_dir / "rtdetr_classmap.txt"
+            inference_classmap.write_text(
+                "".join(f"{name}\n" for name in rtdetr_class_names), encoding="utf-8"
+            )
+
         archived = [p for p in (_archive(f, stamp) for f in live) if p is not None]
         # A leftover commit journal describes the run being archived, not this one.
         (results_dir / COMMIT_JOURNAL_NAME).unlink(missing_ok=True)
@@ -647,6 +735,10 @@ def main() -> int:
             "created_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "config": {
                 "max_iterations": args.max_iterations,
+                "detector": args.detector,
+                "training_annotation_format": (
+                    "odvg" if args.detector == "grounding_dino" else "coco"
+                ),
                 "num_gpus": args.num_gpus,
                 "num_epochs": args.num_epochs,
                 "learning_rate": args.learning_rate,
@@ -676,6 +768,12 @@ def main() -> int:
                 "rare_class_list": ",".join(rare_classes) if rare_classes else None,
                 "source_detection_file": resolved_detection["--source-detection-file"],
                 "target_detection_file": resolved_detection["--target-detection-file"],
+                "inference_classmap": (
+                    str(inference_classmap) if inference_classmap else None
+                ),
+                "rtdetr_category_ids": rtdetr_category_ids,
+                "rtdetr_num_classes": rtdetr_num_classes,
+                "rtdetr_class_names": rtdetr_class_names,
                 "distance_metric": args.distance_metric,
                 "candidate_expansion_factor": args.candidate_expansion_factor,
                 "iou_threshold": args.iou_threshold,
@@ -706,6 +804,7 @@ def main() -> int:
         print(f"  workspace       {workspace}")
         print(f"  iterations      max {args.max_iterations} · gpus {args.num_gpus} · "
               f"epochs {args.num_epochs} · lr {args.learning_rate}")
+        print(f"  detector        {args.detector}")
         print(f"  target classes  {', '.join(target_classes)}")
         print(f"  ap50            {json.dumps(thresholds, sort_keys=True)}")
         print(f"  mining          {args.allocation_policy} · multiplier {args.multiplier} · "

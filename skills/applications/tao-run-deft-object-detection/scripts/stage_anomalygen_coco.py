@@ -11,8 +11,8 @@ iteration tree, assigns collision-proof
 basenames, and projects every annotation onto the detector class approved
 during preflight.
 
-It emits COCO, not ODVG. Run TAO Data Services ``annotations convert`` on the
-output before appending the resulting ODVG source to Grounding DINO.
+It emits COCO, not ODVG. RT-DETR consumes that COCO directly. For Grounding
+DINO, run TAO Data Services ``annotations convert`` before appending it.
 """
 
 from __future__ import annotations
@@ -82,6 +82,24 @@ def stage(args: argparse.Namespace) -> dict[str, Any]:
         staged["file_name"] = name
         staged_images.append(staged)
 
+    output_categories = [{"id": 1, "name": target_class}]
+    target_category_id = 1
+    category_contract_coco = getattr(args, "category_contract_coco", None)
+    if category_contract_coco:
+        contract_path = Path(category_contract_coco).expanduser().resolve()
+        contract = _load_object(contract_path)
+        categories = contract.get("categories")
+        if not isinstance(categories, list) or not categories:
+            raise ValueError("--category-contract-coco has no categories")
+        matches = [row for row in categories if row.get("name") == target_class]
+        if len(matches) != 1:
+            raise ValueError(
+                f"target class {target_class!r} must appear exactly once in "
+                f"--category-contract-coco; found {len(matches)}"
+            )
+        target_category_id = int(matches[0]["id"])
+        output_categories = categories
+
     staged_annotations: list[dict[str, Any]] = []
     per_image = {image_id: 0 for image_id in image_ids}
     for row in annotations:
@@ -95,7 +113,7 @@ def stage(args: argparse.Namespace) -> dict[str, Any]:
         if width <= 0 or height <= 0:
             raise ValueError(f"annotation has non-positive bbox: {row}")
         staged = dict(row)
-        staged["category_id"] = 1
+        staged["category_id"] = target_category_id
         staged_annotations.append(staged)
         per_image[image_id] += 1
     missing = sorted(image_id for image_id, count in per_image.items() if count == 0)
@@ -105,7 +123,7 @@ def stage(args: argparse.Namespace) -> dict[str, Any]:
     staged_coco = {
         "images": staged_images,
         "annotations": staged_annotations,
-        "categories": [{"id": 1, "name": target_class}],
+        "categories": output_categories,
     }
     output_coco.parent.mkdir(parents=True, exist_ok=True)
     output_coco.write_text(json.dumps(staged_coco, indent=2) + "\n", encoding="utf-8")
@@ -114,6 +132,7 @@ def stage(args: argparse.Namespace) -> dict[str, Any]:
         "status": "COMPLETE",
         "source_tag": source_tag,
         "target_class": target_class,
+        "target_category_id": target_category_id,
         "source_validation_summary": str(summary_path),
         "source_coco": str(source_coco),
         "output_coco": str(output_coco),
@@ -136,6 +155,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-images-dir", required=True)
     parser.add_argument("--output-coco", required=True)
     parser.add_argument("--target-class", required=True)
+    parser.add_argument(
+        "--category-contract-coco",
+        default=None,
+        help="Optional prepared-pool COCO. When set (RT-DETR), preserve its full "
+             "categories and assign the target class its frozen category id.",
+    )
     parser.add_argument("--report-json", default=None)
     return parser.parse_args()
 

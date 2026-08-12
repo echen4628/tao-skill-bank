@@ -9,7 +9,10 @@ subscripts ``val_data_sources["json_file"]`` unconditionally — so every iterat
 needs one. Deriving it from the pool means it always exists, always matches the
 target classes, and needs nothing from the user.
 
-**The category ids are rewritten to 0-based, and that is the whole point.**
+By default category ids are rewritten to 0-based for Grounding DINO. RT-DETR
+uses ``--category-id-policy preserve`` because its ``dataset.num_classes`` and
+``dataset.eval_class_ids`` must remain aligned with the source COCO.
+
 Grounding DINO's validation loader does::
 
     classes = [obj["category_id"] for obj in target]      # dataloader/coco.py
@@ -38,7 +41,9 @@ import sys
 from pathlib import Path
 
 
-def build_val_split(coco: dict, fraction: float, seed: int) -> tuple[dict, dict]:
+def build_val_split(
+    coco: dict, fraction: float, seed: int, category_id_policy: str = "zero_based"
+) -> tuple[dict, dict]:
     images = coco.get("images", [])
     if not images:
         raise ValueError("the source COCO has no images")
@@ -50,12 +55,17 @@ def build_val_split(coco: dict, fraction: float, seed: int) -> tuple[dict, dict]
     picked = random.Random(seed).sample(ordered, count)
     keep_ids = {im["id"] for im in picked}
 
-    # category_id is used verbatim as a dense label index by GDINO's val loader,
-    # so shift the whole space to 0-based. Preserve declaration order: those
-    # indices must line up with the caption/label order used at inference.
     categories = coco.get("categories", [])
-    offset = min((c["id"] for c in categories), default=0)
-    remap = {c["id"]: c["id"] - offset for c in categories}
+    if category_id_policy == "zero_based":
+        # Grounding DINO uses category_id verbatim as a dense label index.
+        offset = min((c["id"] for c in categories), default=0)
+        remap = {c["id"]: c["id"] - offset for c in categories}
+    elif category_id_policy == "preserve":
+        # RT-DETR keeps the category ids that define num_classes/eval_class_ids.
+        offset = 0
+        remap = {c["id"]: c["id"] for c in categories}
+    else:
+        raise ValueError(f"unknown category_id_policy: {category_id_policy}")
 
     val = {
         "images": picked,
@@ -73,6 +83,7 @@ def build_val_split(coco: dict, fraction: float, seed: int) -> tuple[dict, dict]
         "fraction": fraction,
         "seed": seed,
         "category_id_offset_applied": offset,
+        "category_id_policy": category_id_policy,
         "categories": {c["name"]: c["id"] for c in val["categories"]},
     }
     return val, report
@@ -87,6 +98,12 @@ def parse_args() -> argparse.Namespace:
                         help="Share of pool images to use for validation. Default 0.10.")
     parser.add_argument("--seed", type=int, default=1337,
                         help="Selection seed; a resumed run validates on the same images.")
+    parser.add_argument(
+        "--category-id-policy",
+        choices=("zero_based", "preserve"),
+        default="zero_based",
+        help="Grounding DINO needs zero_based; RT-DETR needs preserve.",
+    )
     parser.add_argument("--report-json", default=None)
     return parser.parse_args()
 
@@ -102,7 +119,9 @@ def main() -> int:
             raise FileNotFoundError(f"--coco does not exist: {src}")
         coco = json.loads(src.read_text(encoding="utf-8"))
 
-        val, report = build_val_split(coco, args.fraction, args.seed)
+        val, report = build_val_split(
+            coco, args.fraction, args.seed, args.category_id_policy
+        )
         if not val["annotations"]:
             raise ValueError(
                 "the validation split holds no annotations — raise --fraction, or check "
@@ -121,8 +140,10 @@ def main() -> int:
         print(f"val split -> {out}")
         print(f"  {report['val_images']}/{report['source_images']} images, "
               f"{report['val_annotations']} annotations (seed {report['seed']})")
-        print(f"  category ids shifted by -{report['category_id_offset_applied']} "
-              f"-> {report['categories']}")
+        print(
+            f"  category ids policy={report['category_id_policy']} "
+            f"offset=-{report['category_id_offset_applied']} -> {report['categories']}"
+        )
         return 0
     except Exception as exc:  # noqa: BLE001
         print(f"ERROR: {exc}", file=sys.stderr)

@@ -1,6 +1,6 @@
 # DEFT OD — Staging Stage Overlay (bundled glue)
 
-This stage has no leaf skill. It turns the miner's flat list of filepaths into a trainable ODVG source, validates it, and extends the exclude set for the next iteration. All three scripts are bundled and run on the host through `scripts/deft_python.sh` — no container.
+This stage has no leaf skill. It turns the miner's flat list of filepaths into detector-native annotations, validates them, and extends the exclude set. Grounding DINO trains from ODVG; RT-DETR adds a COCO/classmap projection while retaining the ODVG artifacts used by the shared audit contract.
 
 ## Why this is glue and not a skill
 
@@ -39,6 +39,24 @@ Hard-fails when an ODVG record references an image missing on disk, when the fil
 
 This is a hard-stop gate. Do not train on a source that fails validation.
 
+### RT-DETR COCO projection
+
+When `config.detector=rtdetr`, also run:
+
+```bash
+<skill_root>/scripts/deft_python.sh <skill_root>/scripts/stage_mined_coco.py \
+  --mined-parquet "${RESULTS_DIR}/iter${N}/mining/final_unique_files.parquet" \
+  --source-coco "<config.source_detection_file>" \
+  --output-images-dir "${RESULTS_DIR}/iter${N}/tmm/images" \
+  --output-coco "${RESULTS_DIR}/iter${N}/tmm/annotations/tmm_coco.json" \
+  --output-classmap "${RESULTS_DIR}/iter${N}/tmm/annotations/rtdetr_classmap.txt" \
+  --report-json "${RESULTS_DIR}/iter${N}/tmm/coco_staging_report.json"
+```
+
+Compare the emitted classmap byte-for-byte with
+`config.inference_classmap`. Hard-stop on drift. See `references/rtdetr.md` for
+the dense category-id contract.
+
 ## Step 3 — Extend the exclude set
 
 ```bash
@@ -58,7 +76,7 @@ If `deft_state.json::config.anomalygen_enabled` is true, read and execute
 `references/anomalygen-next.md` now, before committing `stage`. That overlay
 prepares from this iteration's `box_gaps.parquet`, generates defects, enforces
 the immutable generation/staging boundary, stages generated COCO, converts it
-to ODVG, and lists the additional audited commit flags.
+to the selected detector's training format, and lists the additional audited commit flags.
 
 Resume from durable gates instead of regenerating completed work: validate and
 reuse a COMPLETE prepared-input manifest; validate and reuse a COMPLETE
@@ -90,6 +108,8 @@ Point `--weak-parquet` at **iteration 1's** weak-images parquet on every iterati
   --label-map "${RESULTS_DIR}/iter${N}/tmm/annotations/labelmap.json" \
   --staged-images-dir "${RESULTS_DIR}/iter${N}/tmm/images" \
   --exclude-parquet "${RESULTS_DIR}/iter${N}/mined_cumulative.parquet" \
+  [--staged-coco "${RESULTS_DIR}/iter${N}/tmm/annotations/tmm_coco.json" \
+   --inference-classmap "${RESULTS_DIR}/iter${N}/tmm/annotations/rtdetr_classmap.txt"] \
   [--synthetic-validation-summary "${RESULTS_DIR}/iter${N}/synthetic/anomalygen_next_generation/validation_summary.json" \
    --synthetic-coco "${RESULTS_DIR}/iter${N}/synthetic/training/synthetic_train.json" \
    --synthetic-odvg "${RESULTS_DIR}/iter${N}/synthetic/training/annotations/synthetic_train_odvg.jsonl" \

@@ -11,7 +11,7 @@ Three sources, chosen by stage:
     ``???`` on mandatory fields. ``results_dir`` is itself mandatory. Supported
     modules are analytics, annotations, augmentation, auto_label, image.
 
-``grounding_dino`` / ``codetr``
+``grounding_dino`` / ``rtdetr`` / ``codetr``
     ``OmegaConf.to_yaml(OmegaConf.structured(ExperimentConfig))``. No spec files
     ship for these — ``experiment_specs/`` exists only for centerpose and
     visual_changenet — but the Hydra schema carries the defaults.
@@ -48,6 +48,8 @@ DS_MODULES = {
 PYT_MODELS = {
     "grounding_dino_train": "grounding_dino",
     "grounding_dino_inference": "grounding_dino",
+    "rtdetr_train": "rtdetr",
+    "rtdetr_inference": "rtdetr",
     "codetr_inference": "codetr",
 }
 SHIPPED_ASSETS = {
@@ -148,7 +150,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ds-image", default=None,
                         help="Data-services image. Required for the annotations/analytics stages.")
     parser.add_argument("--pyt-image", default=None,
-                        help="TAO PyTorch image. Required for the grounding_dino/codetr stages.")
+                        help="TAO PyTorch image. Required for detector model stages.")
     parser.add_argument("--workdir", default=None,
                         help="Scratch dir for `default_specs`. Defaults to alongside --out.")
     return parser.parse_args()

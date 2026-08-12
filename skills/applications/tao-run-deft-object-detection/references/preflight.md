@@ -58,11 +58,11 @@ Resolve everything you can before asking the user. Parameter precedence is stric
 
 5. **Image presence.** `docker image inspect "$TAO_PYT_IMAGE" "$TAO_DS_IMAGE"`. Record anything missing as `WILL_PULL_AFTER_APPROVAL`; do not pull before the gate.
 
-6. **Zero-shot checkpoint — pull it from NGC unless the user supplied one.** The baseline
-   scores this checkpoint without training and every iteration fine-tunes from it.
+6. **Detector and base checkpoint.** Resolve `detector=grounding_dino|rtdetr`
+   explicitly and freeze it in state. The baseline scores the base checkpoint
+   without training and every iteration fine-tunes from it.
 
-   **The user's own path always wins.** When they did not give one, fetch the published
-   checkpoint rather than asking:
+   For Grounding DINO, the user's path wins; otherwise fetch the published checkpoint:
 
    ```bash
    ZERO_SHOT_CHECKPOINT=$(<skill_root>/scripts/deft_python.sh \
@@ -85,9 +85,13 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    Record in the Summary which source won (`user` or `NGC <version>`), and hard-stop if the
    resolved path does not exist.
 
-   Then confirm the spec matches the checkpoint's architecture. `model.backbone`,
+   For RT-DETR, require a user-supplied task-compatible checkpoint; there is no
+   open-vocabulary zero-shot fallback. Read `references/rtdetr.md`. The checkpoint
+   head, source COCO categories, and train template must describe the same class set.
+
+   For either detector, confirm the spec matches the checkpoint's architecture. `model.backbone`,
    `num_queries`, `enc_layers`, `dec_layers`, `num_feature_levels`, and especially
-   `class_embed_bias` must all agree, or the run dies at load time — after the container has
+   detector geometry must agree, or the run dies at load time — after the container has
    started, with an error that reads like a bad checkpoint rather than a bad spec.
 
    `class_embed_bias` is the one that actually bites: it defaults to `False`, is absent from
@@ -99,18 +103,26 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    image the checkpoint was trained with in the Summary; the pinned image is not
    automatically the right one.
 
-7. **Train-spec template.** Must exist and parse as YAML, and `dataset.train_data_sources` must be a **list** (Grounding DINO ODVG shape). A mapping there means the spec is COCO-shaped and this workflow cannot append to it.
+7. **Train-spec template.** Must exist and parse as YAML, and
+   `dataset.train_data_sources` must be a **list** for both detectors. Entries are
+   `{image_dir,json_file,label_map}` for Grounding DINO/ODVG and
+   `{image_dir,json_file}` for RT-DETR/COCO.
 
-   **Seed training data is optional.** Unlike the AOI loop — where ChangeNet must learn the task from a mandatory seed set — Grounding DINO is zero-shot capable and can start cold. Inspect the list and branch:
+   **Seed training data is optional.** Inspect the list and branch:
 
-   - **Non-empty** → validate every entry's `image_dir`, `json_file`, and `label_map` resolve on disk. Report the source count and total ODVG record count in the Summary. Iteration 1 appends to what is already there.
+   - **Non-empty** → validate every entry's `image_dir` and `json_file`; also
+     require `label_map` for Grounding DINO. Report source and annotation counts.
    - **Empty or absent** → note in the Summary that iteration 1 trains on mined data alone, and that the first iteration's dataset will be small. Not an error.
 
    Either way the source pool (check 8) stays mandatory — without it there is nothing to mine and the loop cannot add data at all.
 
-8. **Source pool.** Two artifacts, both required:
+8. **Source pool.** The embedding parquet and ODVG tree remain required for the
+   shared miner/staging audit. RT-DETR additionally requires the prepared pool COCO:
    - `source_pool_embeddings` parquet — must be non-empty and carry `filepath` and `embedding`.
    - `source_pool_annotations` — an ODVG tree containing `*.jsonl` records keyed by `file_name`, and ideally a `*labelmap.json`. Staging synthesizes a labelmap from observed categories when none is found, but an explicit one is preferred.
+   - `source_detection_file` — required for RT-DETR even with global allocation.
+     Its COCO categories must exactly match target classes and use dense ids
+     `0..N-1` or `1..N`. This file is the RT-DETR class and mined-staging contract.
 
    Hard-stop if either is missing or the parquet has zero rows. **The loop consumes a
    prepared pool; it does not build one.** Preparing the pool is its own run, completed
@@ -162,7 +174,7 @@ Resolve everything you can before asking the user. Parameter precedence is stric
 
 10. **KPI inputs.** Image directory, ground-truth KITTI label directory, and class-mapping YAML must all exist. `image_dir` must not end in `/` — `kpi_analyze` derives its `Sequence Name` from the second-to-last path component.
 
-11. **Class thresholds and mining config.** Per-class AP50 thresholds and the mining `multiplier` both have reference defaults — do not interrogate the user for them. Omitting `--ap50-thresholds-json` gates each target class at the reference ITS value (`car 0.99`, `bicycle 0.7`, `person 0.7`) and any other target class at `0.7`; `--multiplier` defaults to `3`. Surface the defaulted values in the Pre-Flight Summary so the user can override them, and treat a class gated by assumption as worth flagging: too loose a gate marks no image weak and the iteration mines nothing. If rare classes are configured, also require `source_detection_file` and `target_detection_file` as **COCO JSONs** — `class_stratified` mining needs them and TAO DS will not infer the format.
+11. **Class thresholds and mining config.** Per-class AP50 thresholds and the mining `multiplier` both have reference defaults — do not interrogate the user for them. Omitting `--ap50-thresholds-json` gates each target class at the reference ITS value (`car 0.99`, `bicycle 0.7`, `person 0.7`) and any other target class at `0.7`; `--multiplier` defaults to `3`. Surface the defaulted values in the Pre-Flight Summary so the user can override them, and treat a class gated by assumption as worth flagging: too loose a gate marks no image weak and the iteration mines nothing. If rare classes are configured, also require `target_detection_file` as COCO; RT-DETR already requires `source_detection_file` in check 8.
 
 12. **GPU count.**
 
@@ -211,7 +223,7 @@ Print this and **STOP — wait for explicit approval.** This is the only user ga
 ### Run config
 | Field                  | Value                                          | Source            |
 | ---------------------- | ---------------------------------------------- | ----------------- |
-| Model                  | Grounding DINO (ODVG)                          | workflow          |
+| Model                  | Grounding DINO (ODVG) / RT-DETR (COCO)        | user              |
 | Max iterations         | N                                              | user              |
 | Stop condition         | max_iterations reached, or zero weak images.
                           mAP is reported, not gated — no target.         | workflow          |
@@ -228,10 +240,12 @@ Print this and **STOP — wait for explicit approval.** This is the only user ga
 ### Inputs
 | Field                     | Value                                        |
 | ------------------------- | -------------------------------------------- |
-| Zero-shot checkpoint      | <path>                                       |
+| Base checkpoint           | <path> (NGC/user; target-compatible for RT-DETR) |
 | Train spec template       | <path> (N base source(s); 0 = mined-only)    |
 | Source pool embeddings    | <path> (N rows, encoder: <model>)            |
 | Source pool annotations   | <path> (N jsonl, labelmap: found/synthesized)|
+| Source pool COCO          | <path> (required for RT-DETR)                |
+| RT-DETR class contract    | disabled / ids, num_classes, classmap order  |
 | KPI images                | <path>                                       |
 | KPI ground truth          | <path> (N label files)                       |
 | Class mapping             | <path>                                       |
@@ -247,7 +261,7 @@ Print this and **STOP — wait for explicit approval.** This is the only user ga
 ### Per-iteration stages
 gap_analysis -> embed -> mine -> stage -> train -> inference -> kpi_analyze
 (baseline runs inference -> kpi_analyze only; no training)
-(when enabled, stage admits both mined ODVG and validated synthetic ODVG;
+(stage admits detector-native mined and optional synthetic annotations;
 train appends both to the cumulative source list)
 ```
 
@@ -262,6 +276,7 @@ Perform the planned pulls and directory creation, then initialize state once:
   --workspace "$WORKSPACE" \
   --results-dir "$RESULTS_DIR" \
   --max-iterations "$MAX_ITERATIONS" \
+  --detector "$DETECTOR" \
   --num-gpus "$NUM_GPUS" \
   --num-epochs "$NUM_EPOCHS" \
   --learning-rate "$LEARNING_RATE" \
@@ -269,6 +284,7 @@ Perform the planned pulls and directory creation, then initialize state once:
   --train-spec-template "$TRAIN_SPEC_TEMPLATE" \
   --source-pool-embeddings "$SOURCE_POOL_EMBEDDINGS" \
   --source-pool-annotations "$SOURCE_POOL_ANNOTATIONS" \
+  --source-detection-file "$SOURCE_DETECTION_FILE" \
   --embedding-model "$EMBEDDING_MODEL" \
   --embedding-model-path "$EMBEDDING_MODEL_PATH" \
   --kpi-images-dir "$KPI_IMAGES_DIR" \
@@ -287,4 +303,4 @@ Perform the planned pulls and directory creation, then initialize state once:
   --results-dir "$RESULTS_DIR"
 ```
 
-Then copy the train-spec template to `${RESULTS_DIR}/train_grounding_dino.yaml` and begin the baseline.
+Then copy the train-spec template to `${RESULTS_DIR}/train_${DETECTOR}.yaml` and begin the baseline using the detector-specific overlay.

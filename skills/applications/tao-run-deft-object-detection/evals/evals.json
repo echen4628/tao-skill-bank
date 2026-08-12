@@ -19,14 +19,30 @@
     "question": "Reading only the tao-run-deft-object-detection skill documentation, which underlying TAO skills does each of its iteration stages invoke, and which stages are bundled glue rather than a skill? Do NOT run any commands, scripts, or web searches.",
     "expected_skill": "tao-run-deft-object-detection",
     "expected_script": null,
-    "ground_truth": "gap_analysis uses tao-analyze-gaps-od-map; embed uses tao-generate-image-embeddings; mine uses tao-mine-od-images; train and inference use tao-train-grounding-dino; kpi_analyze uses tao-analyze-detection-kpi. The stage step is bundled glue with no leaf skill.",
+    "ground_truth": "gap_analysis uses tao-analyze-gaps-od-map; embed uses tao-generate-image-embeddings; mine uses tao-mine-od-images; train and inference use tao-train-grounding-dino for Grounding DINO or tao-train-rtdetr with automl_policy off for RT-DETR; kpi_analyze uses tao-analyze-detection-kpi. The stage step is bundled glue with detector-native ODVG or COCO staging.",
     "expected_behavior": [
       "Maps gap_analysis to tao-analyze-gaps-od-map",
       "Maps embed to tao-generate-image-embeddings",
       "Maps mine to tao-mine-od-images",
-      "Maps train and inference to tao-train-grounding-dino",
+      "Maps train and inference to tao-train-grounding-dino or tao-train-rtdetr according to the frozen detector",
       "Maps kpi_analyze to tao-analyze-detection-kpi",
       "Identifies the stage step as bundled glue with no underlying skill",
+      "Does not run commands, scripts, or web searches"
+    ]
+  },
+  {
+    "id": "tao-run-deft-object-detection-rtdetr",
+    "question": "A user request: \"Run the DEFT object-detection loop with my task-fine-tuned RT-DETR checkpoint and prepared source pool.\" Identify the workflow and outline the RT-DETR-specific data, training, inference, and checkpoint handoffs. Do NOT run commands, scripts, web searches, or other tools.",
+    "expected_skill": "tao-run-deft-object-detection",
+    "expected_script": null,
+    "ground_truth": "Use tao-run-deft-object-detection with detector=rtdetr: keep the shared KITTI KPI/gap/mining stages, stage mined/synthetic COCO with a frozen category/classmap contract, invoke tao-train-rtdetr with automl_policy off, and resolve model_epoch checkpoints for the next inference stage.",
+    "expected_behavior": [
+      "Identifies tao-run-deft-object-detection as the orchestrator and tao-train-rtdetr as the train/inference leaf skill",
+      "States that RT-DETR uses COCO training sources rather than Grounding DINO ODVG sources",
+      "Preserves dense category ids, num_classes, eval_class_ids, and the inference classmap across the loop",
+      "Sets automl_policy off at the application invocation boundary rather than writing it into the YAML spec",
+      "Uses the resolved model_epoch checkpoint for iteration inference",
+      "Notes that RT-DETR inference still emits KITTI labels consumed by KPI and gap analysis",
       "Does not run commands, scripts, or web searches"
     ]
   }

@@ -41,6 +41,7 @@ visible without diffing against a container.
 | `coco_to_odvg.yaml` | `annotations convert` COCO→ODVG | formats only |
 | `codetr_inference.yaml` | pool pseudo-labelling | `conf_threshold: 0.3`; `input_width`/`input_height: 640` — left null the run is ~4× slower *and* produces different boxes |
 | `grounding_dino_inference.yaml` | baseline + per-iteration inference | `conf_threshold: 0.0` (keep the full PR curve), `log_scale: auto`, `class_embed_bias: true` |
+| `rtdetr_inference.yaml` | RT-DETR baseline + per-iteration inference | `conf_threshold: 0.0`, 640x640 input, batch size 4 |
 | `kpi_analyze.yaml` | scoring | `num_recall_points: 11`, `ignore_sqwidth: 40` |
 
 `grounding_dino train` has no overlay: it is built from the full
@@ -53,16 +54,18 @@ a detection takes the class of the caption token it matched, by position — so 
 must be derived from the run's classes, never pinned.
 | `build_kpi_mapping.py` | `kpi_analyze` | Narrow the supplied KPI class mapping to the run's target classes, aliases verbatim. A class the model cannot predict would otherwise score a constant 0 and compress the mAP trend. |
 | `build_pool_input_parquet.py` | `prep` | List the pool image directory into the `filepath` parquet `embedding image_embeddings` reads. Absolute paths, symlinks resolved, sorted — so the same directory always yields the same parquet. |
-| `make_pool_val_split.py` | `prep` | Carve a validation COCO from 10% of the prepared pool, rewriting category ids to **0-based**. `grounding_dino train` cannot run without a validation source, and its loader uses `category_id` verbatim as a dense label index, so a conventional 1-based COCO overflows on the last class. |
+| `make_pool_val_split.py` | `prep` | Carve a deterministic validation COCO. Default `zero_based` serves Grounding DINO; `--category-id-policy preserve` keeps RT-DETR's frozen ids. |
 | `await_stage.py` | any long stage | Block until a stage finishes by watching its artifacts or `status.json`. **Never wait on a process name** — see below. |
 | `build_fold_mapping.py` | `prep` | Translate one `classes.yaml` into the two mappings TAO folds with: the `category_mapping` block for the Co-DETR inference spec (the real fold, applied at detection time with per-category soft-NMS) and the identity `kitti.mapping` for `annotations convert`. Emits nothing else — TAO does the folding. |
 | `validate_pool_coco.py` | `prep` | Verify the converted pool: every target class carries annotations, case-only class mismatches are named, unmapped source classes are reported with counts, and image/annotation counts reconcile. Both TAO consumers drop unmatched names silently, so this is where a broken fold surfaces. |
 | `compute_mining_budget.py` | before `mine` | `desired_unique_count` = weak-image count × multiplier, with optional floor/ceiling. Point `--weak-parquet` at **iteration 1's** parquet on every iteration to hold the budget constant. Writes only the number to stdout. |
 | `stage_mined_odvg.py` | `stage` | Copy mined images, look up ODVG records by basename, renumber `image_id`, remap labels, write `tmm_odvg.jsonl` + `labelmap.json`. **Truncates** the JSONL, so re-running is idempotent. |
+| `stage_mined_coco.py` | `stage` (RT-DETR) | Copy mined images, subset/renumber prepared-pool COCO by basename, preserve category ids, and emit the RT-DETR classmap. |
 | `validate_odvg_images.py` | `stage` | Hard-fail when an ODVG record references a missing image, when there are no usable records, or when records are duplicated. `--prune` deletes orphan images. Stdlib only. |
 | `merge_exclude_parquet.py` | `stage` | Merge this iteration's mined set with the previous cumulative and de-duplicate. `--parquet-b` is optional so iteration 1 works. |
-| `stage_anomalygen_coco.py` | `stage` (optional) | Stage complete validated AnomalyGenNext output and project its COCO onto the approved detector target class before COCO→ODVG conversion. |
-| `update_train_spec.py` | `train` | Copy the previous spec, append the mined `{image_dir, json_file, label_map}` entry and the optional synthetic entry to `dataset.train_data_sources`, then set `train.num_epochs` and `train.optim.lr`. Lowers `checkpoint_interval` / `validation_interval` when they exceed the epoch count, and will not double-add a source already present. |
+| `stage_anomalygen_coco.py` | `stage` (optional) | Stage complete validated AnomalyGenNext output and project its COCO onto the approved detector target class. RT-DETR preserves the full frozen category contract; Grounding DINO converts the result to ODVG. |
+| `update_train_spec.py` | `train` | Copy the previous spec and append detector-native mined/synthetic entries. Grounding DINO uses ODVG + label map; RT-DETR uses COCO and freezes class ids. Sets epochs/LR/GPU shape and avoids duplicate sources. |
+| `resolve_rtdetr_checkpoint.py` | `train` (RT-DETR) | Select the highest non-empty `model_epoch_<N>.pth`, or the matching `-EMA` checkpoint when requested. |
 
 ### Script invocation
 
@@ -112,7 +115,8 @@ Never render the report inline in the parent — the agent exists so an end-of-l
 | `embed` | `references/tao-generate-image-embeddings.md` | `tao-skill-bank:tao-generate-image-embeddings` |
 | `mine` | `references/tao-mine-od-images.md` | `tao-skill-bank:tao-mine-od-images` |
 | `stage` | `references/stage-mined-data.md` | *(bundled glue)* |
-| `train`, `inference` | `references/grounding-dino.md` | `tao-skill-bank:tao-train-grounding-dino` |
+| `train`, `inference` (Grounding DINO) | `references/grounding-dino.md` | `tao-skill-bank:tao-train-grounding-dino` |
+| `train`, `inference` (RT-DETR) | `references/rtdetr.md` | `tao-skill-bank:tao-train-rtdetr` with `automl_policy: off` |
 | `kpi_analyze` | `references/tao-analyze-detection-kpi.md` | `tao-skill-bank:tao-analyze-detection-kpi` |
 
 **Read only the current stage's overlay.** If one is missing, stop and ask the user to reinstall the plugin — do not substitute generic shell commands.
@@ -129,4 +133,4 @@ Use only when the mapped Skill tool is unavailable and Docker plus the current o
 
 **Format spelling differs by stage.** `gap_analysis object_detection` takes lowercase `kitti`/`coco`; `analytics kpi_analyze` takes uppercase `KITTI`/`COCO`. Both are correct for their own stage.
 
-**Never put `automl_policy` or a `workflow:` key in a TAO spec.** TAO's Hydra schema rejects them at config-merge time. Plain `docker run … train` is already non-AutoML.
+**Never put `automl_policy` or a `workflow:` key in a TAO spec.** TAO's Hydra schema rejects them at config-merge time. The RT-DETR leaf skill defaults train to AutoML, so pass `automl_policy: off` at the application/skill invocation boundary; direct `docker run … train` is already non-AutoML.

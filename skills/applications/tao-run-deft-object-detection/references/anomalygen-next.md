@@ -16,8 +16,8 @@ The data skills currently support AnomalyGenNext inference only. DEFT needs
 only inference: every dataset route supplies a checkpoint already fine-tuned
 for its requested anomaly types plus the matching recipe. This application
 owns the final admission boundary: validated output is staged, converted to
-ODVG, committed with the iteration, and appended to the cumulative Grounding
-DINO training sources.
+ODVG for Grounding DINO or kept as COCO for RT-DETR, committed with the
+iteration, and appended to the cumulative detector-native training sources.
 
 ## Preflight — all values are required when enabled
 
@@ -80,13 +80,16 @@ needs each FN box and mask identity.
      --output-images-dir "${RESULTS_DIR}/iter${N}/synthetic/training/images" \
      --output-coco "${RESULTS_DIR}/iter${N}/synthetic/training/synthetic_train.json" \
      --target-class "<config.anomalygen_target_class>" \
+     [--category-contract-coco "<config.source_detection_file>"] \
      --report-json "${RESULTS_DIR}/iter${N}/synthetic/training/staging_report.json"
    ```
 
    The script requires a complete immutable generation summary,
    collision-proofs basenames, and records `training_pool_mutated=true` only in
    its new staging report. It never alters the generator's validation summary.
-5. Convert the staged COCO to ODVG with the standard
+   Pass `--category-contract-coco` for RT-DETR. It preserves the prepared pool's
+   complete category list and assigns the synthetic target its frozen id.
+5. For Grounding DINO, convert the staged COCO to ODVG with the standard
    `assets/overlays/coco_to_odvg.yaml` flow used by source-pool preparation.
    Write both files under
    `${RESULTS_DIR}/iter${N}/synthetic/training/annotations/`, then run
@@ -114,19 +117,23 @@ needs each FN box and mask identity.
      --odvg "${RESULTS_DIR}/iter${N}/synthetic/training/annotations/synthetic_train_odvg.jsonl" \
      --key-field file_name
    ```
-6. Commit the normal `stage` artifacts plus:
+   For RT-DETR, skip this conversion and validate/use `synthetic_train.json`
+   directly.
+6. Commit the normal `stage` artifacts plus the common fields below. Add
+   `--synthetic-odvg` and `--synthetic-label-map` only for Grounding DINO:
 
    ```text
    --synthetic-validation-summary <anomalygen_next_generation/validation_summary.json>
    --synthetic-coco <training/synthetic_train.json>
-   --synthetic-odvg <training/annotations/synthetic_train_odvg.jsonl>
-   --synthetic-label-map <training/annotations/synthetic_train_odvg_labelmap.json>
    --synthetic-images-dir <training/images>
    --synthetic-staging-report <training/staging_report.json>
+   # Grounding DINO only:
+   --synthetic-odvg <training/annotations/synthetic_train_odvg.jsonl>
+   --synthetic-label-map <training/annotations/synthetic_train_odvg_labelmap.json>
    ```
 
 7. During `train`, call `update_train_spec.py` with both the normal `--tmm-*`
-   triplet and the optional `--synthetic-*` triplet. The output spec therefore
+   source and the detector-native optional `--synthetic-*` source. The output spec therefore
    appends two sources for iteration N. Since it copies iteration N-1's spec,
    all prior mined and synthetic sources remain in the list.
 
@@ -138,10 +145,10 @@ synthetic source. Its train spec contains:
 
 ```text
 seed sources
-+ iter1 mined ODVG
-+ iter1 synthetic ODVG
-+ iter2 mined ODVG
-+ iter2 synthetic ODVG
++ iter1 mined detector-native source
++ iter1 synthetic detector-native source
++ iter2 mined detector-native source
++ iter2 synthetic detector-native source
 ```
 
 That accumulated list — not the generator output directory by itself — is the
@@ -152,7 +159,7 @@ proof that synthetic data participates in the next training cycle.
 - zero eligible/generated synthetic rows when the producer is enabled;
 - any incomplete or inconsistent generation summary;
 - a target class absent from the detector target set;
-- COCO image/annotation mismatch or failed COCO→ODVG validation;
+- COCO image/annotation/category mismatch, or failed Grounding DINO COCO→ODVG validation;
 - a train spec missing either enabled producer's current-iteration source.
 
 For a generation-only experiment, run the two leaf skills outside the active

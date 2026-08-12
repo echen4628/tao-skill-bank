@@ -1,5 +1,5 @@
 ## Description: <br>
-Runs the full DEFT improvement loop for NVIDIA TAO object detection models — baseline evaluate, gap analysis, unique-neighbor mining, retraining, and deployment gating against a customer-defined primary metric. <br>
+Runs the full DEFT improvement loop for NVIDIA TAO Grounding DINO and RT-DETR models — baseline inference, per-class gap analysis, unique-neighbor mining, detector-native ODVG/COCO staging, retraining, and mAP trend reporting. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -10,7 +10,7 @@ NVIDIA <br>
 Apache 2.0 <br>
 
 ## Use Case: <br>
-Developers and engineers iteratively improving TAO OD models (DINO, RT-DETR, Grounding DINO) by closing performance gaps identified through per-class mAP analysis and unique-neighbor data mining. <br>
+Developers and engineers iteratively improving TAO RT-DETR or Grounding DINO models by closing performance gaps identified through per-class mAP analysis and unique-neighbor data mining. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>

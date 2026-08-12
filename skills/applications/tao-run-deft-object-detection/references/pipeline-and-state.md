@@ -29,10 +29,13 @@ Cost is proportional to **pool size**, not to what mining later selects, and it 
 
 The loop never trains at baseline. It scores the checkpoint the user supplied:
 
-1. **[SKILL — `tao-train-grounding-dino`] `inference`.** Run `grounding_dino inference` with `inference.checkpoint=<zero_shot_checkpoint>` and `results_dir=${RESULTS_DIR}/baseline`. TAO appends the task name, so labels land in `${RESULTS_DIR}/baseline/inference/labels/`. See `references/grounding-dino.md`.
+1. **[DETECTOR SKILL] `inference`.** Dispatch from frozen
+   `config.detector`: Grounding DINO uses `references/grounding-dino.md`;
+   RT-DETR uses `references/rtdetr.md`. Both write KITTI labels under
+   `${RESULTS_DIR}/baseline/inference/labels/`.
 2. **[SKILL — `tao-analyze-detection-kpi`] `kpi_analyze`.** Score those labels against the KPI ground truth. See `references/tao-analyze-detection-kpi.md`.
 
-Also seed `${RESULTS_DIR}/train_grounding_dino.yaml` by copying the user's train-spec template. Iteration 1 extends that copy; it is never trained from at baseline.
+Also seed `${RESULTS_DIR}/train_<detector>.yaml` from the approved train template.
 
 ### Iteration N — seven stages, in order
 
@@ -57,7 +60,7 @@ Each iteration's `gap_analysis` consumes the **previous** phase's inference labe
    Output: `final_unique_files.parquet`, `summary.json`. See `references/tao-mine-od-images.md`.
 
 4. **[GLUE] `stage`.**
-   Turn the mined filepath list into a trainable ODVG source, then extend the exclude set. Runs three bundled scripts in order:
+   Turn the mined filepath list into detector-native annotations, then extend the exclude set. The shared ODVG staging/audit path remains; RT-DETR also emits COCO and a classmap with `stage_mined_coco.py` as documented in `references/rtdetr.md`.
 
    ```bash
    <skill_root>/scripts/deft_python.sh <skill_root>/scripts/stage_mined_odvg.py \
@@ -80,17 +83,26 @@ Each iteration's `gap_analysis` consumes the **previous** phase's inference labe
 
    Staging writes `tmm_odvg.jsonl` (one line per mined image, `image_id` renumbered sequentially, `instances[].label` remapped through the labelmap) and `labelmap.json`. `stage_mined_odvg.py` **truncates** `tmm_odvg.jsonl` before writing — the reference implementation opened it in append mode, so re-running an iteration silently duplicated every entry. See `references/stage-mined-data.md`.
 
+   For `detector=rtdetr`, commit `tmm_coco.json` and the staged classmap in
+   addition to the shared artifacts. Their classmap must match the run-level
+   frozen classmap byte-for-byte.
+
    When `state.config.anomalygen_enabled=true`, continue inside this same
    disk-backed stage: run the inference-only preparation and generation skills
    from `references/anomalygen-next.md`, admit only complete validated output
-   through `stage_anomalygen_coco.py`, and convert the staged COCO to ODVG.
-   Commit the synthetic validation summary, COCO, ODVG, label map, image
-   directory, and staging report as optional audited stage artifacts. A
+   through `stage_anomalygen_coco.py`. Grounding DINO converts that COCO to
+   ODVG; RT-DETR consumes it directly with the prepared pool's full category
+   contract. Commit the detector-required synthetic artifacts. A
    generation-only directory is not a training source; this explicit admission
    and commit are required.
 
-5. **[SKILL — `tao-train-grounding-dino`] `train`.**
-   First append the new ODVG source to the train spec:
+5. **[DETECTOR SKILL] `train`.**
+   Grounding DINO appends ODVG with `references/grounding-dino.md`. RT-DETR
+   appends COCO with `references/rtdetr.md` and invokes `tao-train-rtdetr` with
+   `automl_policy: off`. Both routes use `update_train_spec.py` and preserve a
+   growing list of sources.
+
+   Grounding DINO example:
 
    ```bash
    <skill_root>/scripts/deft_python.sh <skill_root>/scripts/update_train_spec.py \
@@ -115,13 +127,15 @@ Each iteration's `gap_analysis` consumes the **previous** phase's inference labe
    `train.pretrained_model_path` is deliberately reset to the frozen **base**
    checkpoint, so every iteration fine-tunes that base on the accumulated
    dataset rather than continuing from `iter{N-1}`'s weights. See
-   `references/grounding-dino.md`. Then run `grounding_dino train -e <spec>
-   results_dir=${RESULTS_DIR}/iter${N} train.num_gpus=<N>`.
+   detector overlay. Then run the detector's train action with
+   `results_dir=${RESULTS_DIR}/iter${N}`.
 
    Iteration N's committed checkpoint must be a newly emitted file under `${RESULTS_DIR}/iter${N}/train/`. A non-zero exit, or a run emitting no new checkpoint, is a hard stop — never evaluate a checkpoint written before the failure.
 
-6. **[SKILL — `tao-train-grounding-dino`] `inference`.**
-   Run `grounding_dino inference` with `inference.checkpoint=${RESULTS_DIR}/iter${N}/train/gdino_model_latest.pth` and `results_dir=${RESULTS_DIR}/iter${N}`. Labels land in `${RESULTS_DIR}/iter${N}/inference/labels/` and become the next iteration's `gap_analysis` input.
+6. **[DETECTOR SKILL] `inference`.**
+   Run the detector matching `config.detector` against the exact checkpoint
+   committed by stage 5. Labels land in `${RESULTS_DIR}/iter${N}/inference/labels/`
+   and become the next iteration's `gap_analysis` input.
 
 7. **[SKILL — `tao-analyze-detection-kpi`] `kpi_analyze`.**
    Score the new labels. Record `kpi_calc.csv` and the mAP parsed from stdout. mAP is **reported, not gated** — a regression does not stop the loop.
@@ -225,7 +239,8 @@ results/run_<YYYYMMDD_HHMMSS>/
 │                                      # next commit_stage.py run undoes an
 │                                      # interrupted one from it
 ├── DEFT_Loop_Report.md
-├── train_grounding_dino.yaml          # seeded at baseline from the user's template
+├── train_<detector>.yaml               # seeded at baseline from the approved template
+├── rtdetr_classmap.txt                 # RT-DETR only; frozen COCO category order
 ├── prep/                              # only when prep ran
 │   ├── inference/labels/              # Co-DETR pseudo-labels, already folded
 │   ├── codetr_category_mapping.yaml   # the fold, applied at detection time
@@ -247,7 +262,7 @@ results/run_<YYYYMMDD_HHMMSS>/
     ├── mining/                        # final_unique_files.parquet, summary.json
     ├── tmm/
     │   ├── images/                    # staged mined images
-    │   └── annotations/               # tmm_odvg.jsonl, labelmap.json
+    │   └── annotations/               # shared ODVG; RT-DETR also tmm_coco.json + classmap
     ├── synthetic/                     # only when anomalygen_enabled=true
     │   ├── filtering.yaml             # per-iteration copy; gap_parquet patched
     │   ├── inputs/                    # prepared AnomalyGenNext inputs + provenance
@@ -256,10 +271,10 @@ results/run_<YYYYMMDD_HHMMSS>/
     │       ├── images/                # collision-proof staged synthetic images
     │       ├── synthetic_train.json   # admitted, target-class-projected COCO
     │       ├── staging_report.json    # source-tag admission + counts
-    │       └── annotations/           # converted ODVG + label map
+    │       └── annotations/           # Grounding DINO only: converted ODVG + label map
     ├── mined_cumulative.parquet       # exclude set for the next iteration
-    ├── train_grounding_dino.yaml      # prev spec + current mined/synthetic sources
-    ├── train/                         # gdino_model_latest.pth, status.json
+    ├── train_<detector>.yaml          # prev spec + current detector-native sources
+    ├── train/                         # GDINO latest or RT-DETR model_epoch_*.pth
     ├── inference/labels/*.txt
     └── kpi/kpi_calc.csv
 ```
