@@ -1,0 +1,4 @@
+interface:
+  display_name: "TAO DEFT OD AOI"
+  short_description: "Run policy-routed RT-DETR AOI improvement"
+  default_prompt: "Use $tao-run-deft-od-aoi to plan and run a policy-routed RT-DETR AOI object-detection loop."

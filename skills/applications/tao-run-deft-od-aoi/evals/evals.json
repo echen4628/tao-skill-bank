@@ -1,0 +1,33 @@
+[
+  {
+    "id": "tao-run-deft-od-aoi-routing",
+    "question": "A user asks: Use the DEFT OD AOI skill and explain exactly what the confidence 0.3 and 0.8 gap passes do, including the IoU routes. Do not run commands or tools.",
+    "expected_skill": "tao-run-deft-od-aoi",
+    "expected_script": null,
+    "ground_truth": "The loose 0.3 pass supplies FP routing: best IoU below 0.05 requests clean negatives, 0.05 inclusive to below 0.5 requests real defect images, and IoU 0.5 or above is a TP. The strict 0.8 pass supplies unmatched-GT FNs for real mining and optional synthesis; it is not a high-confidence FP search.",
+    "expected_behavior": [
+      "Selects tao-run-deft-od-aoi",
+      "States that both passes use greedy one-to-one same-class matching at IoU 0.5",
+      "Maps loose FP IoU below 0.05 to clean-negative mining",
+      "Maps loose FP IoU from 0.05 inclusive to below 0.5 to real-defect mining",
+      "States that strict 0.8 filters tentative predictions so uncovered GT becomes FN",
+      "Does not claim that the strict pass is a false-positive route",
+      "Mentions that clean KPI false alarms are normally absent because the analyzer iterates GT-present classes",
+      "Does not run commands or tools"
+    ]
+  },
+  {
+    "id": "tao-run-deft-od-aoi-vs-canonical",
+    "question": "A user wants to preserve the original Grounding-DINO mining-only DEFT workflow and also reproduce the reference RT-DETR AOI experiment. Which skill should own each flow and why? Do not run commands or tools.",
+    "expected_skill": "tao-run-deft-od-aoi",
+    "expected_script": null,
+    "ground_truth": "Keep tao-run-deft-object-detection as the canonical Grounding-DINO whole-image embedding/mining workflow. Use the separate tao-run-deft-od-aoi application for the binary RT-DETR cold-start loop with dual gap passes, FP/FN routing, clean negatives, optional AnomalyGenNext, admission, cumulative COCO, and adaptive training.",
+    "expected_behavior": [
+      "Keeps tao-run-deft-object-detection unchanged for the original flow",
+      "Assigns DEFT OD AOI to tao-run-deft-od-aoi",
+      "Names the DEFT OD AOI dual-threshold, clean-negative, synthetic, and fresh-base differences",
+      "Does not merge DEFT OD AOI defaults into the canonical skill",
+      "Does not run commands or tools"
+    ]
+  }
+]
