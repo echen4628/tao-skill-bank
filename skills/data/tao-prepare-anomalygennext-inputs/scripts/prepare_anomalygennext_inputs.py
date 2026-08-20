@@ -736,10 +736,28 @@ def finalize_inputs(args: argparse.Namespace) -> None:
             pair_id = str(candidate["candidate_id"])
             selected = candidate.to_dict()
             selected["pair_id"] = pair_id
+            invalid_aligned_mask = None
             for branch_name, row in placed.items():
-                info = _validate_aligned_mask(Path(row["mask_filename"]), Path(clean_path))
+                try:
+                    info = _validate_aligned_mask(
+                        Path(row["mask_filename"]), Path(clean_path)
+                    )
+                except ValueError as exc:
+                    message = str(exc)
+                    if message.startswith("aligned mask covers the entire image:"):
+                        code = "full_image"
+                    elif message.startswith("aligned mask/image dimensions differ:"):
+                        code = "dimension_mismatch"
+                    else:
+                        code = "invalid"
+                    invalid_aligned_mask = f"invalid_aligned_mask:{branch_name}:{code}"
+                    break
                 selected[f"{branch_name}_aligned_mask"] = str(row["mask_filename"])
                 selected[f"{branch_name}_aligned_mask_sha256"] = info["aligned_mask_sha256"]
+            if invalid_aligned_mask:
+                status["selection_reason"] = invalid_aligned_mask
+                status_rows.append(status)
+                continue
             selected_pairs.append(selected)
             used_clean.add(clean_path)
             retained += 1

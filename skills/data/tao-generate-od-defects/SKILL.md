@@ -39,6 +39,13 @@ point to an existing checkpoint already fine-tuned for that row's anomaly types
 and to its matching recipe. Future full and fine-tune-only workflows belong in
 this generic data-skill layer, not in a DEFT application overlay.
 
+The structured execution metadata is in `references/skill_info.yaml`. This
+action uses an external checkout and virtualenv rather than a bank-owned
+container image. Resolve the concrete AnomalyGenNext interpreter during
+preflight and record that absolute interpreter path as the job `image`.
+Resolve relative `command` and script-default paths against this skill
+directory before staging.
+
 ## Inputs
 
 - Completed input root containing
@@ -71,7 +78,7 @@ bash "$GEN_SKILL/scripts/generate_od_defects.sh" \
   --num-gpus 1
 ```
 
-Use `--datasets dagm,mpdd` to generate a self-contained subset without changing
+Use `--datasets plant_a,texture_set` to generate a self-contained subset without changing
 the frozen input directory. `--num-gpus` must match the platform allocation.
 Use `anomalygen_next_generation` as the semantic output-directory name.
 `--output-dir` must not exist unless `--resume-existing-generation` is supplied;

@@ -13,13 +13,20 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import yaml
 from PIL import Image
 
 SCRIPT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import assemble_deft_od_aoi_coco  # noqa: E402
+import inspect_deft_od_aoi_sources  # noqa: E402
+import normalize_deft_od_aoi_pools  # noqa: E402
+import prepare_deft_od_aoi_siglip_candidates  # noqa: E402
+import prepare_deft_od_aoi_siglip_queries  # noqa: E402
+import prepare_deft_od_aoi_sources  # noqa: E402
 import route_deft_od_aoi  # noqa: E402
+import route_deft_od_aoi_siglip  # noqa: E402
 import select_deft_od_aoi_checkpoint  # noqa: E402
 import select_deft_od_aoi_probe  # noqa: E402
 import validate_deft_od_aoi_inputs  # noqa: E402
@@ -62,39 +69,23 @@ def image_record(image_id: int, file_name: str, *, defect_type: str = "scratch")
 
 
 class PolicyTest(unittest.TestCase):
-    def test_reference_uniform_schedule(self) -> None:
-        policy = build_policy(
-            profile="deft_od_aoi_reference",
-            max_iterations=10,
-            uniform_mine_per_pocket=None,
-            synthetic_enabled=None,
-        )
-        self.assertEqual(uniform_mine_for_iteration(policy, 1), 12)
-        self.assertEqual(uniform_mine_for_iteration(policy, 2), 12)
-        self.assertEqual(uniform_mine_for_iteration(policy, 3), 0)
-        self.assertEqual(uniform_mine_for_iteration(policy, 10), 0)
-
-    def test_configurable_requires_uniform(self) -> None:
-        with self.assertRaisesRegex(ValueError, "requires uniform"):
+    def test_policy_requires_explicit_run_choices(self) -> None:
+        with self.assertRaisesRegex(ValueError, "synthetic_enabled"):
             build_policy(
-                profile="configurable",
                 max_iterations=3,
-                uniform_mine_per_pocket=None,
-                synthetic_enabled=True,
+                synthetic_enabled=None,
             )
         policy = build_policy(
-            profile="configurable",
             max_iterations=3,
-            uniform_mine_per_pocket=0,
             synthetic_enabled=False,
         )
+        self.assertEqual(policy["schema_version"], 3)
+        self.assertEqual(policy["retrieval"]["mode"], "siglip_only")
         self.assertEqual(uniform_mine_for_iteration(policy, 2), 0)
         self.assertTrue(policy["training"]["probes_enabled"])
         self.assertTrue(probes_active(policy, 3))
         disabled = build_policy(
-            profile="configurable",
             max_iterations=3,
-            uniform_mine_per_pocket=0,
             synthetic_enabled=False,
             probes_enabled=False,
         )
@@ -103,9 +94,7 @@ class PolicyTest(unittest.TestCase):
 
     def test_dual_gap_specs(self) -> None:
         policy = build_policy(
-            profile="configurable",
             max_iterations=3,
-            uniform_mine_per_pocket=0,
             synthetic_enabled=False,
         )
         args = argparse.Namespace(
@@ -122,6 +111,515 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual(loose["iou_threshold"], 0.5)
         self.assertEqual(loose["weak_thresholds"]["defect"]["recall"], 1.0)
         self.assertEqual(loose["default_precision_threshold"], 0.0)
+
+
+class GenericPoolNormalizationTest(unittest.TestCase):
+    def test_mixed_shards_normalize_to_strict_pools(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            kpi_images = root / "kpi_images"
+            test_images = root / "test_images"
+            pool_images = root / "pool_images"
+            shard = root / "mixed_bench"
+            normalized = root / "normalized"
+            for directory in (kpi_images, test_images, pool_images, shard, normalized):
+                directory.mkdir()
+            make_image(kpi_images / "kpi.png", 1)
+            make_image(test_images / "test.png", 2)
+            make_image(pool_images / "defect.png", 3)
+            make_image(pool_images / "clean.png", 4)
+
+            kpi_coco = root / "kpi.json"
+            test_coco = root / "test.json"
+            write_json(
+                kpi_coco,
+                {
+                    "images": [
+                        {
+                            "id": 1,
+                            "file_name": "kpi.png",
+                            "width": 64,
+                            "height": 64,
+                            "benchmark": "eval_bench",
+                        }
+                    ],
+                    "annotations": [
+                        {
+                            "id": 1,
+                            "image_id": 1,
+                            "category_id": 7,
+                            "bbox": [1, 1, 10, 10],
+                        }
+                    ],
+                    "categories": [{"id": 7, "name": "scratch"}],
+                },
+            )
+            write_json(
+                test_coco,
+                {
+                    "images": [
+                        {
+                            "id": 1,
+                            "file_name": "test.png",
+                            "width": 64,
+                            "height": 64,
+                            "benchmark": "eval_bench",
+                        }
+                    ],
+                    "annotations": [],
+                    "categories": [{"id": 7, "name": "scratch"}],
+                },
+            )
+            write_json(
+                shard / "train.json",
+                {"images": [], "annotations": [], "categories": []},
+            )
+            write_json(
+                shard / "mine.json",
+                {
+                    "images": [
+                        {
+                            "id": 10,
+                            "file_name": "000001.png",
+                            "source_path": str(pool_images / "defect.png"),
+                            "width": 64,
+                            "height": 64,
+                        },
+                        {
+                            "id": 11,
+                            "file_name": "000002.png",
+                            "source_path": str(pool_images / "clean.png"),
+                            "width": 64,
+                            "height": 64,
+                        },
+                    ],
+                    "annotations": [
+                        {
+                            "id": 5,
+                            "image_id": 10,
+                            "category_id": 9,
+                            "bbox": [2, 2, 12, 12],
+                            "defect_label": "scratch",
+                        }
+                    ],
+                    "categories": [{"id": 9, "name": "defect"}],
+                    "info": {"bench": "mixed_bench"},
+                },
+            )
+            documents, report = normalize_deft_od_aoi_pools.normalize(
+                argparse.Namespace(
+                    kpi_coco=str(kpi_coco),
+                    kpi_images_dir=str(kpi_images),
+                    test_coco=str(test_coco),
+                    test_images_dir=str(test_images),
+                    pool_root=str(root),
+                    pool_coco=None,
+                    pool_splits="train,mine",
+                    pool_images_dir=None,
+                    output_dir=str(normalized),
+                    check_only=False,
+                )
+            )
+            self.assertEqual(report["outputs"]["source"], {"images": 1, "annotations": 1})
+            self.assertEqual(report["outputs"]["clean"], {"images": 1, "annotations": 0})
+            source_meta = documents["source"]["images"][0]["deft_od_aoi"]
+            self.assertEqual(source_meta["benchmark"], "mixed_bench")
+            self.assertEqual(source_meta["texture"], "mixed_bench")
+            self.assertEqual(source_meta["defect_type"], "scratch")
+            for name, value in documents.items():
+                write_json(normalized / f"{name}.json", value)
+            validation = validate_deft_od_aoi_inputs.run(
+                argparse.Namespace(
+                    kpi_coco=str(normalized / "kpi.json"),
+                    kpi_images_dir=str(normalized),
+                    test_coco=str(normalized / "test.json"),
+                    test_images_dir=str(normalized),
+                    source_coco=str(normalized / "source.json"),
+                    source_images_dir=str(normalized),
+                    clean_coco=str(normalized / "clean.json"),
+                    clean_images_dir=str(normalized),
+                    output=None,
+                )
+            )
+            self.assertEqual(validation["status"], "valid")
+
+
+class SourceManifestPreparationTest(unittest.TestCase):
+    def test_strict_manifest_preserves_curated_clean_semantics(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            dataset = root / "PlantA" / "housing"
+            paths = {
+                "kpi": dataset / "test" / "broken" / "kpi.png",
+                "test": dataset / "test" / "broken" / "test.png",
+                "train_defect": dataset / "test" / "broken" / "train_defect.png",
+                "train_boxless": dataset / "test" / "good" / "train_good.png",
+                "mine_defect": dataset / "test" / "broken" / "mine_defect.png",
+                "mine_boxless": dataset / "test" / "good" / "mine_good.png",
+                "external_clean": dataset / "train" / "good" / "external_good.png",
+            }
+            for seed, path in enumerate(paths.values(), start=1):
+                path.parent.mkdir(parents=True, exist_ok=True)
+                make_image(path, seed)
+
+            def record(image_id: int, path: Path) -> dict:
+                return {
+                    "id": image_id,
+                    "file_name": path.name,
+                    "source_path": str(path),
+                    "width": 64,
+                    "height": 64,
+                }
+
+            box = {
+                "id": 1,
+                "image_id": 1,
+                "category_id": 1,
+                "bbox": [2, 2, 12, 12],
+            }
+            kpi_coco = root / "kpi.json"
+            test_coco = root / "test.json"
+            train_coco = root / "train.json"
+            mine_coco = root / "mine.json"
+            write_json(
+                kpi_coco,
+                coco([record(1, paths["kpi"])], [box]),
+            )
+            write_json(
+                test_coco,
+                coco([record(1, paths["test"])], [box]),
+            )
+            write_json(
+                train_coco,
+                coco(
+                    [
+                        record(1, paths["train_defect"]),
+                        record(2, paths["train_boxless"]),
+                    ],
+                    [box],
+                ),
+            )
+            write_json(
+                mine_coco,
+                coco(
+                    [
+                        record(1, paths["mine_defect"]),
+                        record(2, paths["mine_boxless"]),
+                    ],
+                    [box],
+                ),
+            )
+            manifest_path = root / "dataset_sources.json"
+            write_json(
+                manifest_path,
+                {
+                    "schema_version": 1,
+                    "strict_metadata": True,
+                    "metadata_rules": {
+                        "plant_a": {
+                            "defect_path_regex": (
+                                r"/PlantA/(?P<texture>[^/]+)/test/"
+                                r"(?P<defect_type>[^/]+)/"
+                            ),
+                            "clean_path_regex": (
+                                r"/PlantA/(?P<texture>[^/]+)/(?:train|test)/good/"
+                            ),
+                            "generator_type_template": (
+                                "{benchmark}_{texture}+{defect_type}"
+                            ),
+                        }
+                    },
+                    "inputs": {
+                        "kpi": [{"benchmark": "plant_a", "coco": str(kpi_coco)}],
+                        "test": [{"benchmark": "plant_a", "coco": str(test_coco)}],
+                        "mining": [
+                            {
+                                "benchmark": "plant_a",
+                                "coco": [str(train_coco), str(mine_coco)],
+                                "boxless_clean_coco": [str(mine_coco)],
+                            }
+                        ],
+                        "clean": [
+                            {
+                                "benchmark": "plant_a",
+                                "glob": str(dataset / "train" / "good" / "*.png"),
+                            }
+                        ],
+                    },
+                },
+            )
+            documents, report = prepare_deft_od_aoi_sources.prepare(
+                argparse.Namespace(
+                    manifest=str(manifest_path),
+                    output_dir=None,
+                    check_only=True,
+                    link_mode="symlink",
+                )
+            )
+            self.assertEqual(report["outputs"]["source"], {"images": 2, "annotations": 2})
+            self.assertEqual(report["outputs"]["clean"], {"images": 2, "annotations": 0})
+            self.assertEqual(
+                sum(item.get("boxless_ignored", 0) for item in report["mining_sources"]),
+                1,
+            )
+            source_metadata = documents["source"]["images"][0]["deft_od_aoi"]
+            self.assertEqual(source_metadata["texture"], "housing")
+            self.assertEqual(source_metadata["defect_type"], "broken")
+            self.assertEqual(source_metadata["generator_type"], "plant_a_housing+broken")
+            self.assertFalse(
+                any("fallback" in key for key in report["metadata_sources"])
+            )
+            clean_view = root / "anomalygen_clean"
+            clean_counts = prepare_deft_od_aoi_sources._materialize_synthesis_clean_view(
+                documents["clean"], clean_view, "symlink"
+            )
+            self.assertEqual(clean_counts, {"plant_a_housing": 2})
+            self.assertEqual(
+                len(list((clean_view / "plant_a_housing" / "clean_image").iterdir())),
+                2,
+            )
+            prepare_deft_od_aoi_sources._materialize_synthesis_clean_view(
+                documents["clean"], clean_view, "symlink"
+            )
+
+            inspection = inspect_deft_od_aoi_sources.inspect(
+                argparse.Namespace(
+                    dataset_path=[str(root)], max_depth=2, sample_paths=2, output=None
+                )
+            )
+            discovered = inspection["datasets"][0]["coco_files"]
+            self.assertEqual(len(discovered), 4)
+            mine_summary = next(
+                item for item in discovered if Path(item["path"]).name == "mine.json"
+            )
+            self.assertEqual(mine_summary["annotated_images"], 1)
+            self.assertEqual(mine_summary["boxless_images"], 1)
+
+
+class SiglipOnlyRoutingTest(unittest.TestCase):
+    def test_admission_quarantines_nonpositive_boxes_before_crop(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            image_path = root / "source.png"
+            make_image(image_path, 91)
+            policy = build_policy(max_iterations=2, synthetic_enabled=False)
+            admission = route_deft_od_aoi.Admission(policy, None)
+            candidates = [
+                {
+                    "source_path": str(image_path),
+                    "boxes": [[30, 30, -10, 12]],
+                },
+                {
+                    "source_path": str(image_path),
+                    "boxes": [[20, 100, 10, 10]],
+                },
+                {
+                    "source_path": str(image_path),
+                    "boxes": [[10, 10, 20, 20]],
+                },
+            ]
+
+            admitted = admission.admit(candidates, 3, clean=False)
+
+            self.assertEqual(len(admitted), 1)
+            self.assertEqual(admitted[0]["boxes"], [[10.0, 10.0, 20.0, 20.0]])
+            self.assertEqual(admission.report["boxes_quarantined"], 2)
+            self.assertEqual(admission.report["rejected_no_valid_boxes"], 2)
+
+    def test_admission_does_not_report_roundoff_as_boundary_clipping(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            image_path = root / "source.png"
+            make_image(image_path, 92)
+            policy = build_policy(max_iterations=2, synthetic_enabled=False)
+            admission = route_deft_od_aoi.Admission(policy, None)
+            box = [0.1, 0.2, 20.3, 21.4]
+
+            admitted = admission.admit(
+                [{"source_path": str(image_path), "boxes": [box]}],
+                1,
+                clean=False,
+            )
+
+            self.assertEqual(admitted[0]["boxes"], [box])
+            self.assertEqual(admission.report["boxes_clipped_to_image"], 0)
+
+    def test_candidate_crops_apply_exif_orientation(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            images = root / "images"
+            images.mkdir()
+            source_image = images / "portrait.jpg"
+            exif = Image.Exif()
+            exif[274] = 6
+            Image.new("RGB", (40, 20), (20, 40, 60)).save(source_image, exif=exif)
+            source_coco = root / "source.json"
+            clean_coco = root / "clean.json"
+            record = image_record(1, source_image.name)
+            record.update({"source_path": str(source_image), "width": 20, "height": 40})
+            write_json(
+                source_coco,
+                coco(
+                    [record],
+                    [{"id": 1, "image_id": 1, "category_id": 1, "bbox": [2, 25, 8, 8]}],
+                ),
+            )
+            write_json(clean_coco, coco([], []))
+            frame, report = prepare_deft_od_aoi_siglip_candidates.prepare(
+                argparse.Namespace(
+                    source_coco=str(source_coco),
+                    source_images_dir=str(images),
+                    clean_coco=str(clean_coco),
+                    clean_images_dir=str(images),
+                    output_crops_dir=str(root / "crops"),
+                    output_parquet=str(root / "candidate.parquet"),
+                    report_json=str(root / "report.json"),
+                    defect_context_scale=1.5,
+                    clean_grids="1,2",
+                    output_size=224,
+                )
+            )
+            self.assertEqual(len(frame), 1)
+            self.assertEqual(report["rows"], {"defect": 1})
+
+    def test_global_role_separated_retrieval_crosses_dataset_boundaries(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source_images = root / "source"
+            clean_images = root / "clean"
+            kpi_images = root / "kpi"
+            for directory in (source_images, clean_images, kpi_images):
+                directory.mkdir()
+            paths = [
+                source_images / "plant_a_defect.png",
+                source_images / "poolx_defect.png",
+                clean_images / "plant_a_clean.png",
+                clean_images / "poolx_clean.png",
+                kpi_images / "kpi.png",
+            ]
+            for seed, path in enumerate(paths, start=1):
+                make_image(path, seed)
+
+            source_coco = root / "source.json"
+            clean_coco = root / "clean.json"
+            kpi_coco = root / "kpi.json"
+            source_rows = [
+                {**image_record(1, "plant_a_defect.png"), "source_path": str(paths[0])},
+                {**image_record(2, "poolx_defect.png"), "source_path": str(paths[1])},
+            ]
+            source_rows[0]["deft_od_aoi"]["benchmark"] = "plant_a"
+            source_rows[1]["deft_od_aoi"]["benchmark"] = "poolx_neu"
+            write_json(
+                source_coco,
+                coco(
+                    source_rows,
+                    [
+                        {"id": 1, "image_id": 1, "category_id": 1, "bbox": [8, 8, 20, 20]},
+                        {"id": 2, "image_id": 2, "category_id": 1, "bbox": [8, 8, 20, 20]},
+                    ],
+                ),
+            )
+            clean_rows = [
+                {**image_record(1, "plant_a_clean.png"), "source_path": str(paths[2])},
+                {**image_record(2, "poolx_clean.png"), "source_path": str(paths[3])},
+            ]
+            for row, benchmark in zip(clean_rows, ("plant_a", "poolx_solder")):
+                row["deft_od_aoi"]["benchmark"] = benchmark
+                row["deft_od_aoi"].pop("defect_type")
+                row["deft_od_aoi"].pop("generator_type")
+            write_json(clean_coco, coco(clean_rows, []))
+            kpi_row = {**image_record(1, "kpi.png"), "source_path": str(paths[4])}
+            kpi_row["deft_od_aoi"]["benchmark"] = "plant_a"
+            write_json(
+                kpi_coco,
+                coco(
+                    [kpi_row],
+                    [{"id": 1, "image_id": 1, "category_id": 1, "bbox": [8, 8, 20, 20]}],
+                ),
+            )
+
+            candidate_frame, candidate_report = prepare_deft_od_aoi_siglip_candidates.prepare(
+                argparse.Namespace(
+                    source_coco=str(source_coco),
+                    source_images_dir=str(source_images),
+                    clean_coco=str(clean_coco),
+                    clean_images_dir=str(clean_images),
+                    output_crops_dir=str(root / "candidate_crops"),
+                    output_parquet=str(root / "candidate_rows.parquet"),
+                    report_json=str(root / "candidate_report.json"),
+                    defect_context_scale=1.5,
+                    clean_grids="1,2",
+                    output_size=224,
+                )
+            )
+            self.assertEqual(candidate_report["rows"], {"clean": 10, "defect": 2})
+
+            strict_path = root / "strict.parquet"
+            loose_path = root / "loose.parquet"
+            pd.DataFrame(
+                [{"gap_type": "FN", "filepath": "kpi.png", "bbox": [8, 8, 28, 28], "best_iou": 0.0}]
+            ).to_parquet(strict_path)
+            pd.DataFrame(
+                [{"gap_type": "FP", "filepath": "kpi.png", "bbox": [35, 35, 55, 55], "best_iou": 0.01}]
+            ).to_parquet(loose_path)
+            query_frame, query_report = prepare_deft_od_aoi_siglip_queries.prepare(
+                argparse.Namespace(
+                    strict_gaps=str(strict_path),
+                    loose_gaps=str(loose_path),
+                    kpi_coco=str(kpi_coco),
+                    kpi_images_dir=str(kpi_images),
+                    output_crops_dir=str(root / "query_crops"),
+                    output_parquet=str(root / "query_rows.parquet"),
+                    report_json=str(root / "query_report.json"),
+                    context_scale=1.5,
+                    output_size=224,
+                    background_iou_upper=0.05,
+                    near_miss_iou_upper=0.5,
+                )
+            )
+            self.assertEqual(query_report["queries"], {"strict_fn": 1, "background_fp": 1})
+
+            def candidate_embedding(row: pd.Series) -> list[float]:
+                if row["role"] == "defect":
+                    return [1.0, 0.0] if row["benchmark"] == "poolx_neu" else [-1.0, 0.0]
+                return [0.0, 1.0] if row["benchmark"] == "poolx_solder" else [0.0, -1.0]
+
+            candidate_frame["embedding"] = candidate_frame.apply(candidate_embedding, axis=1)
+            query_frame["embedding"] = query_frame["role"].map(
+                {"defect": [1.0, 0.0], "clean": [0.0, 1.0]}
+            )
+            candidate_embeddings = root / "candidate_embeddings.parquet"
+            query_embeddings = root / "query_embeddings.parquet"
+            candidate_frame.to_parquet(candidate_embeddings, index=False)
+            query_frame.to_parquet(query_embeddings, index=False)
+            policy_path = root / "policy.json"
+            write_json(policy_path, build_policy(max_iterations=3, synthetic_enabled=False))
+            route_dir = root / "route"
+            report = route_deft_od_aoi_siglip.route(
+                argparse.Namespace(
+                    policy=str(policy_path),
+                    iteration=1,
+                    candidate_embeddings=str(candidate_embeddings),
+                    query_embeddings=str(query_embeddings),
+                    kpi_coco=str(kpi_coco),
+                    source_coco=str(source_coco),
+                    source_images_dir=str(source_images),
+                    clean_coco=str(clean_coco),
+                    clean_images_dir=str(clean_images),
+                    output_dir=str(route_dir),
+                    previous_defect_ledger=None,
+                    previous_clean_ledger=None,
+                    previous_admission_index=None,
+                    conversion_old_strict=None,
+                    conversion_new_strict=None,
+                    prior_admitted_synthetic=0,
+                    valid_generator_types=None,
+                )
+            )
+            self.assertEqual(report["uniform_mine_per_pocket"], 0)
+            self.assertEqual(report["selected_by_benchmark"]["poolx_neu"], 1)
+            self.assertEqual(report["selected_by_benchmark"]["poolx_solder"], 1)
+            self.assertTrue((route_dir / "retrieval_audit.parquet").is_file())
 
 
 class EndToEndDataTest(unittest.TestCase):
@@ -224,9 +722,7 @@ class EndToEndDataTest(unittest.TestCase):
         write_json(
             policy_path,
             build_policy(
-                profile="configurable",
                 max_iterations=3,
-                uniform_mine_per_pocket=0,
                 synthetic_enabled=True,
             ),
         )
@@ -339,6 +835,18 @@ class EndToEndDataTest(unittest.TestCase):
             )
         )
         self.assertEqual(len(manifest["probes"]), 3)
+        for split in ("kpi", "test"):
+            inference_spec = yaml.safe_load(
+                (specs_dir / f"{split}_infer.yaml").read_text(encoding="utf-8")
+            )
+            self.assertEqual(inference_spec["dataset"]["eval_class_ids"], [1])
+            inference_classmap = Path(
+                inference_spec["dataset"]["infer_data_sources"]["classmap"]
+            )
+            self.assertEqual(
+                inference_classmap.read_text(encoding="utf-8"),
+                "background\ndefect\n",
+            )
         for probe, metric in zip(manifest["probes"], (0.1, 0.3, 0.2)):
             status = Path(probe["results_dir"]) / "train" / "status.json"
             status.parent.mkdir(parents=True)
@@ -391,9 +899,7 @@ class EndToEndDataTest(unittest.TestCase):
         write_json(
             disabled_policy,
             build_policy(
-                profile="configurable",
                 max_iterations=3,
-                uniform_mine_per_pocket=0,
                 synthetic_enabled=False,
                 probes_enabled=False,
             ),

@@ -1,13 +1,13 @@
 ---
 name: tao-run-deft-od-aoi
 description: >
-  Run or reproduce the DEFT OD AOI iterative data-selection workflow for binary
-  NVIDIA TAO RT-DETR object detection: warehouse cold start, loose and strict box-gap
-  analysis, FN-pocket real mining, FP-driven clean and near-miss mining,
+  Run the DEFT OD AOI iterative data-selection workflow for binary
+  NVIDIA TAO RT-DETR object detection: generic mixed or sharded COCO intake,
+  a frozen base checkpoint, loose and strict box-gap analysis, global
+  role-separated SigLIP retrieval for FN/FP-driven mining,
   optional AnomalyGenNext synthesis, admission control, cumulative COCO
   assembly, adaptive training, and KPI-only checkpoint selection. Use for
-  "run DEFT OD AOI", "reproduce the DEFT OD AOI reference policy",
-  "dual-threshold DEFT OD", or a
+  "run DEFT OD AOI", "dual-threshold DEFT OD", or a
   binary RT-DETR loop that explicitly routes false positives and false
   negatives. Do not use for the canonical Grounding-DINO whole-image DEFT
   workflow, generic object detection, or one-off training.
@@ -37,9 +37,9 @@ canonical `tao-run-deft-object-detection` defaults as DEFT OD AOI.
    Kubernetes, Brev, virtualenv, or an external platform.
 2. Read the selected platform skill and run its Preflight. Read
    `references/defaults.md` and `references/preflight.md`, resolve required
-   inputs without re-asking for documented defaults, validate every DEFT OD
-   AOI input, and show one launch review through `tao-launch-workflow` before
-   any mutation or submission.
+   inputs without re-asking for documented defaults, inspect and prepare
+   generic or mixed dataset sources when necessary, validate every DEFT OD AOI input, and show
+   one launch review through `tao-launch-workflow` before any submission.
 3. Freeze policy once with `scripts/init_deft_od_aoi_policy.py`. Store the emitted
    JSON in the result directory and never edit it during a run.
 4. Submit GPU work through the selected platform's `submit` / `status` /
@@ -55,20 +55,20 @@ canonical `tao-run-deft-object-detection` defaults as DEFT OD AOI.
 Never place secrets in specs or commands. Check only whether required
 environment variables are set; do not read credential values or files.
 
-## Profiles
-
-- `deft_od_aoi_reference` reproduces the reference policy: ten iterations, uniform
-  top-up of 12 per pocket in iterations 1–2 and zero afterward, synthesis enabled, fixed
-  36-epoch training in iterations 1 and 2, then three short probes and a
-  data-scaled epoch budget.
-- `configurable` keeps the same algorithm but requires
-  `--uniform-mine-per-pocket` and `--synthetic-enabled`. Pass uniform value
-  `0` to disable the gap-independent top-up. Do not invent either default.
-
 Read `references/defaults.md` before asking for inputs or constructing a launch
-review. Read `references/reference-profile.md` before using the exact profile.
-Read `references/gap-routing.md` before changing any confidence, IoU, dose, or
-cap.
+review. Read `references/gap-routing.md` before changing any confidence, IoU,
+dose, or cap.
+
+Accept either four already-normalized COCO pools (kpi.json, test.json, source.json, clean.json) or one or many dataset paths.
+Do not ask the user to manually merge shards, separate defective and boxless
+images, or add routing fields image by image. For path-based intake, run
+`scripts/inspect_deft_od_aoi_sources.py`, author the common strict source
+manifest in `references/source-manifest.md`, then run
+`scripts/prepare_deft_od_aoi_sources.py`.
+When the user wants AnomalyGenNext, ask whether the mining-pool defects have
+per-pixel masks. That is a prerequisite; boxes are not enough. If masks exist,
+also resolve `defect_spec` and the matching fine-tuned checkpoint before the
+launch review. See `references/defaults.md`.
 
 ## Quick Start
 
@@ -77,18 +77,13 @@ After the user approves the launch review, freeze the policy:
 ```bash
 <skill_root>/scripts/deft_python.sh \
   <skill_root>/scripts/init_deft_od_aoi_policy.py \
-  --profile configurable \
   --max-iterations 10 \
-  --uniform-mine-per-pocket 0 \
   --synthetic-enabled true \
   --output "${RESULTS_DIR}/deft_od_aoi_policy.json"
 ```
 
 Pass `--probes-enabled false` to skip the iteration-3+ LR bake-off. Omit the
 flag to keep probes on.
-
-For the exact reference schedule, use `--profile deft_od_aoi_reference` and omit
-both `--uniform-mine-per-pocket` and `--synthetic-enabled`.
 
 ## Workflow
 
@@ -97,17 +92,22 @@ Read `references/scripts-and-agents.md` before invoking a leaf skill: each
 GPU or data-services stage reuses an existing bank skill; this application
 only adds DEFT OD AOI overlays and bundled glue.
 
-1. Establish iteration 0 by running warehouse-checkpoint inference on KPI and
+1. Inspect, prepare, and validate the four disjoint pool roles without copying
+   KPI or test pixels into training. Build one reusable SigLIP candidate cache:
+   contextual GT crops for the defect role and multiscale patches for the
+   explicitly clean role.
+2. Establish iteration 0 by running base-checkpoint inference on KPI and
    test, then loose and strict KPI gaps.
-2. For training iteration N, route strict FNs and loose FPs from iteration
-   N-1 with `scripts/route_deft_od_aoi.py`.
-3. Generate and validate the requested synthetic dose when enabled.
-4. Assemble one cumulative binary COCO containing admitted real positives,
+3. For training iteration N, crop and embed strict FNs and loose FPs from
+   iteration N-1, then route them with
+   `scripts/route_deft_od_aoi_siglip.py`. Candidate eligibility is global
+   within the requested role; dataset and texture labels do not gate search.
+4. Generate and validate the requested synthetic dose when enabled.
+5. Assemble one cumulative binary COCO containing admitted real positives,
    clean negatives, and admitted synthetic positives.
-5. Train every iteration from the same frozen base checkpoint. Use the
-   profile's training policy and select the checkpoint using KPI validation
-   AP50 only.
-6. Infer the selected checkpoint on KPI and test, report both, create loose and
+6. Train every iteration from the same frozen base checkpoint. Use the frozen
+   training policy and select the checkpoint using KPI validation AP50 only.
+7. Infer the selected checkpoint on KPI and test, report both, create loose and
    strict KPI gaps for iteration N, then repeat. Do not stop early on a metric
    target.
 
@@ -118,6 +118,8 @@ only adds DEFT OD AOI overlays and bundled glue.
   descending confidence order.
 - The loose pass supplies FP routes. The strict pass supplies FN routes.
 - KPI crops are retrieval queries only; KPI pixels never enter training.
+- Uniform or random bootstrap mining is disabled. Every selected source image
+  must be reached by a gap query through SigLIP similarity.
 - A clean negative must be explicitly admitted as a COCO image with zero
   annotations. A copied image absent from annotations is an orphan, not a
   clean training example.
@@ -129,6 +131,7 @@ only adds DEFT OD AOI overlays and bundled glue.
 - `references/preflight.md` — required inputs and the single launch review.
 - `references/defaults.md` — required decisions, packaged defaults, and sources.
 - `references/data-contract.md` — binary COCO metadata, pools, and exclusions.
+- `references/source-manifest.md` — one/many-path intake and exact metadata rules.
 - `references/gap-routing.md` — exact FP/FN matching, routing, dosing, and caps.
 - `references/pipeline.md` — stage commands, output layout, and hard gates.
 - `references/training-policy.md` — probes, epoch budgets, checkpoint choice.

@@ -1,0 +1,87 @@
+network_arch: tao-prepare-anomalygennext-inputs
+type: data
+# AnomalyGenNext is supplied as an external checkout plus virtualenv. There is
+# no bank-owned container image to resolve; record the selected interpreter
+# path as the job image when this action runs through a native platform.
+execution_environment: virtualenv
+gpu_spec_key: null
+required_credentials: []
+optional_credentials:
+- name: HF_TOKEN
+  source: env_var
+  only_when: finalization must fetch a missing gated HuggingFace asset
+actions:
+  prepare_sources:
+    command: scripts/prepare_anomalygennext_sources.sh
+    mode: args
+    inputs:
+      config:
+        type: file
+      python:
+        type: file
+        optional: true
+      pipeline_py:
+        type: file
+        optional: true
+    outputs:
+      results_dir:
+        type: folder
+      clean_embedding_spec:
+        type: file
+      fn_embedding_spec:
+        type: file
+      selected_fn_queries:
+        type: file
+    upload_excludes:
+    - inputs/
+    args:
+      config: --config {config}
+      output_dir: --output-dir {results_dir}
+      python: --python {python}
+      pipeline_py: --pipeline-py {pipeline_py}
+    defaults:
+      python: python3
+      pipeline_py: scripts/prepare_anomalygennext_inputs.py
+  finalize_inputs:
+    command: scripts/finalize_anomalygennext_inputs.sh
+    mode: args
+    inputs:
+      config:
+        type: file
+      prepared_inputs_root:
+        type: folder
+      anomalygen_repo:
+        type: folder
+      anomalygen_activate:
+        type: file
+        optional: true
+      anomalygen_python:
+        type: file
+        optional: true
+      pipeline_py:
+        type: file
+        optional: true
+      hf_cache:
+        type: folder
+        optional: true
+    outputs:
+      prepared_inputs_root:
+        type: folder
+      prepared_inputs_manifest:
+        type: file
+      generation_plan:
+        type: file
+      anomalygen_inputs:
+        type: file
+    upload_excludes:
+    - inputs/
+    args:
+      config: --config {config}
+      output_dir: --output-dir {prepared_inputs_root}
+      anomalygen_repo: --anomalygen-repo {anomalygen_repo}
+      activate: --activate {anomalygen_activate}
+      python: --python {anomalygen_python}
+      pipeline_py: --pipeline-py {pipeline_py}
+      hf_cache: --hf-cache {hf_cache}
+    defaults:
+      pipeline_py: scripts/prepare_anomalygennext_inputs.py

@@ -177,14 +177,15 @@ def _crop_signature(path: str, boxes_xyxy: Iterable[tuple[float, float, float, f
             y1 = max(box[3] for box in boxes)
             pad_x = 0.2 * (x1 - x0)
             pad_y = 0.2 * (y1 - y0)
-            crop = image.crop(
-                (
-                    max(0, x0 - pad_x),
-                    max(0, y0 - pad_y),
-                    min(image.width, x1 + pad_x),
-                    min(image.height, y1 + pad_y),
-                )
+            crop_box = (
+                max(0, x0 - pad_x),
+                max(0, y0 - pad_y),
+                min(image.width, x1 + pad_x),
+                min(image.height, y1 + pad_y),
             )
+            if crop_box[2] <= crop_box[0] or crop_box[3] <= crop_box[1]:
+                return None
+            crop = image.crop(crop_box)
             if crop.width < 8 or crop.height < 8:
                 return None
             return _dct_signature(crop)
@@ -290,11 +291,41 @@ class Admission:
             )
         )
 
-    def _screen_boxes(self, boxes: list[list[float]]) -> list[list[float]]:
+    def _screen_boxes(self, boxes: list[list[float]], source_path: str) -> list[list[float]]:
+        try:
+            with Image.open(source_path) as image:
+                image_width, image_height = image.size
+        except OSError:
+            self.report["rejected_unreadable_image"] += 1
+            return []
         kept: list[list[float]] = []
         for box in boxes:
-            _, _, width, height = [float(value) for value in box]
-            bad = width * height < float(self.policy["minimum_box_area_px"])
+            if len(box) != 4:
+                self.report["boxes_quarantined"] += 1
+                continue
+            x, y, width, height = [float(value) for value in box]
+            bad = not all(math.isfinite(float(value)) for value in box)
+            bad = bad or width <= 0 or height <= 0
+            if not bad:
+                x0 = max(0.0, x)
+                y0 = max(0.0, y)
+                x1 = min(float(image_width), x + width)
+                y1 = min(float(image_height), y + height)
+                bad = x1 <= x0 or y1 <= y0
+                if not bad:
+                    clipped = [x0, y0, x1 - x0, y1 - y0]
+                    original = [x, y, width, height]
+                    changed = any(
+                        not math.isclose(left, right, rel_tol=1.0e-12, abs_tol=1.0e-9)
+                        for left, right in zip(clipped, original)
+                    )
+                    if changed:
+                        self.report["boxes_clipped_to_image"] += 1
+                        box = clipped
+                    else:
+                        box = original
+                    _, _, width, height = box
+            bad = bad or width * height < float(self.policy["minimum_box_area_px"])
             bad = bad or max(width, height) / max(1.0e-6, min(width, height)) > float(
                 self.policy["maximum_box_aspect"]
             )
@@ -307,7 +338,7 @@ class Admission:
                 self.report["boxes_quarantined"] += 1
             else:
                 kept.append([float(value) for value in box])
-        return kept or boxes
+        return kept
 
     def admit(self, candidates: list[dict], quota: int, *, clean: bool) -> list[dict]:
         admitted: list[dict] = []
@@ -319,6 +350,16 @@ class Admission:
             if len(admitted) >= quota:
                 break
             self.report["checked"] += 1
+            if not clean:
+                candidate = {
+                    **candidate,
+                    "boxes": self._screen_boxes(
+                        candidate["boxes"], candidate["source_path"]
+                    ),
+                }
+                if not candidate["boxes"]:
+                    self.report["rejected_no_valid_boxes"] += 1
+                    continue
             signature = _combined_signature(candidate["source_path"], candidate["boxes"])
             if signature is not None and self._duplicate(signature, clean):
                 self.report["rejected_duplicate"] += 1
@@ -341,8 +382,6 @@ class Admission:
                     cluster[1] += 1
                 else:
                     clusters.append([global_signature, 1])
-            if not clean:
-                candidate = {**candidate, "boxes": self._screen_boxes(candidate["boxes"])}
             admitted.append(candidate)
             if signature is not None:
                 self.pending.append(signature)
@@ -718,7 +757,6 @@ def route(args: argparse.Namespace) -> dict[str, Any]:
     manifest = selected_real + selected_near + selected_uniform + selected_clean
     report = {
         "iteration": int(args.iteration),
-        "profile": policy["profile"],
         "loose_fp_rows": int(len(loose_fps)),
         "strict_fn_rows": int(len(strict_fns)),
         "unresolved_loose_rows": int(unresolved_loose),

@@ -12,29 +12,17 @@ import os
 import sys
 from pathlib import Path
 
-from deft_od_aoi_policy import CONFIGURABLE_PROFILE, PROFILES, build_policy
+from deft_od_aoi_policy import build_policy
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--profile", choices=PROFILES, required=True)
     parser.add_argument("--max-iterations", type=int, required=True)
-    parser.add_argument(
-        "--uniform-mine-per-pocket",
-        type=int,
-        default=None,
-        help=(
-            "Constant gap-independent top-up for the configurable profile; "
-            "required there, and 0 disables it."
-        ),
-    )
     parser.add_argument(
         "--synthetic-enabled",
         choices=("true", "false"),
-        default=None,
-        help=(
-            "Required for the configurable profile; omit for deft_od_aoi_reference."
-        ),
+        required=True,
+        help="Enable or disable synthetic generation.",
     )
     parser.add_argument(
         "--probes-enabled",
@@ -50,9 +38,7 @@ def main() -> int:
     try:
         args = parse_args()
         policy = build_policy(
-            profile=args.profile,
             max_iterations=args.max_iterations,
-            uniform_mine_per_pocket=args.uniform_mine_per_pocket,
             synthetic_enabled=(
                 None
                 if args.synthetic_enabled is None
@@ -77,14 +63,12 @@ def main() -> int:
         temporary = output.with_suffix(output.suffix + ".tmp")
         temporary.write_text(json.dumps(policy, indent=2) + "\n", encoding="utf-8")
         os.replace(temporary, output)
-        uniform = policy["routing"]["uniform_mine"]
         print(
-            f"DEFT OD AOI policy frozen: profile={policy['profile']} "
-            f"iterations={policy['max_iterations']} uniform={uniform} "
+            f"DEFT OD AOI policy frozen: iterations={policy['max_iterations']} "
+            f"retrieval={policy['retrieval']['mode']} "
             f"probes={policy['training']['probes_enabled']} -> {output}"
         )
-        if args.profile == CONFIGURABLE_PROFILE:
-            print("Uniform mining is explicit; 0 means disabled.")
+        print("SigLIP role-separated retrieval is enabled; uniform mining is disabled.")
         return 0
     except Exception as exc:  # noqa: BLE001
         print(f"ERROR: {exc}", file=sys.stderr)

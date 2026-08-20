@@ -115,10 +115,10 @@ class GenerateOdDefectsTest(unittest.TestCase):
         )()
 
     def test_dataset_subset_rejects_unknown_ids(self) -> None:
-        rows = [{"dataset_id": "btad"}, {"dataset_id": "dagm"}]
-        self.assertEqual(generator._selected_groups(rows, "dagm"), [{"dataset_id": "dagm"}])
+        rows = [{"dataset_id": "line_a"}, {"dataset_id": "line_b"}]
+        self.assertEqual(generator._selected_groups(rows, "line_b"), [{"dataset_id": "line_b"}])
         with self.assertRaisesRegex(ValueError, "unknown dataset ids"):
-            generator._selected_groups(rows, "visa")
+            generator._selected_groups(rows, "line_c")
 
     def test_finalize_reconciles_coco_and_preserves_input_hash(self) -> None:
         generator.finalize(self._args())

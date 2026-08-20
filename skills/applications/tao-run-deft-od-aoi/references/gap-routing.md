@@ -44,27 +44,41 @@ match is handled by the FN rule in the last column.
 Boundary rules are exact: IoU below 0.05 is background-like; IoU from 0.05
 inclusive to 0.5 exclusive is a near miss; IoU 0.5 or above is a match.
 
-## Doses
+## SigLIP-only retrieval and doses
 
-- Group strict FNs by `(benchmark, texture, defect_type)` pocket.
+- Build the candidate index once from all normalized mining sources. Each GT
+  box produces a contextual defect crop. Each verified-clean image produces a
+  whole-image patch plus a 2×2 grid. Embed every crop with the same frozen
+  SigLIP encoder.
+- Crop and embed each routed KPI gap. Strict FNs and near-miss FPs query only
+  the global defect index; background-like FPs query only the global clean
+  index. Benchmark and texture are provenance fields, not search filters.
+- Rank by cosine similarity and select parent images round-robin across query
+  boxes. Deduplicate parent images before the existing admission gate.
+- Group strict FN queries by `(benchmark, texture, defect_type)` only to
+  calculate adaptive doses, conversion, and synthesis requests. This grouping
+  never limits which dataset can satisfy a real-mining query.
 - Compare stable `(image, rounded GT box)` identities from two prior strict
   gap sets. Mine about `1 / conversion_rate` real examples, clipped to 1–6
   times the current FN count. Before a trackable rate exists, use the frozen
   0.33 prior.
 - When fewer than 5% of at least four old boxes convert, freeze synthesis for
   that pocket and keep real mining at the minimum factor.
-- Rank real candidates by DCT similarity between source defect crops and KPI
-  FN crops. KPI pixels remain queries only.
 - Each near-miss loose FP requests two real defect images, capped at 20 per
-  pocket per iteration.
-- Each background-like loose FP requests two clean images from the same
-  benchmark/texture. Cumulative clean negatives cannot exceed cumulative
-  admitted real defect images.
+  KPI pocket per iteration, but its candidates are retrieved globally.
+- Each background-like loose FP requests two globally similar clean images.
+  Cumulative clean negatives cannot exceed cumulative admitted real defect
+  images.
 - Synthetic requests are half the admitted strict-FN real dose plus bounded
   shortage fill. Requests are capped at 1,500 per iteration and admitted
   synthetic images remain at or below 25% of cumulative defective data.
-- Uniform mining is independent of gaps. Its value comes only from the frozen
-  profile; zero disables it.
+- There is no uniform bootstrap. A source dataset contributes only when one of
+  its defect crops or clean patches is similar enough to a KPI gap query.
+
+The first calibration run uses a minimum cosine similarity of `-1.0` and
+writes the top 20 neighbors per query to `retrieval_audit.parquet`. This avoids
+silently choosing an arbitrary cutoff. A stricter threshold is valid only as a
+new frozen policy after the audit has been reviewed.
 
 ## Important clean-KPI limitation
 

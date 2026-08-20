@@ -7,12 +7,15 @@
   `1e-5`, validation every epoch.
 - Binary COCO category id 1 named `defect`; use `dataset.num_classes: 2`,
   `dataset.eval_class_ids: [1]`, and `remap_mscoco_category: false`.
-- Every iteration starts from the same frozen warehouse checkpoint. Never use
+- Binary inference class maps are index-aligned and contain exactly two lines:
+  `background` at index 0 and `defect` at index 1. A one-line `defect` map
+  silently drops category-1 detections from TAO's KITTI label export.
+- Every iteration starts from the same frozen base checkpoint. Never use
   the prior iteration checkpoint as a training initializer.
 - Training data is cumulative admitted real positives, explicit clean
   negatives, and admitted synthetic positives.
-- Preserve inference scores below both gap gates; the reference inference
-  threshold was 0.001 and gap analysis applied 0.3 or 0.8 afterward.
+- Preserve inference scores below both gap gates with an inference threshold
+  of 0.001; gap analysis applies 0.3 or 0.8 afterward.
 
 Read `tao-train-rtdetr/SKILL.md` and its `references/skill_info.yaml`. Build a
 nested YAML spec. Do not write dotted keys into the YAML; dotted paths are only
@@ -41,7 +44,7 @@ Select the probe configuration by KPI validation AP50, then apply those
 optimizer deltas to the main spec.
 
 When probes are disabled (`--probes-enabled false`), skip the bake-off and
-`scripts/select_deft_od_aoi_probe.py`. Train once from the warehouse checkpoint with
+`scripts/select_deft_od_aoi_probe.py`. Train once from the frozen base checkpoint with
 the frozen learning rates. The size-based epoch budget and late-best extension
 still apply.
 
@@ -56,13 +59,30 @@ epochs, resume that same run for 12 additional epochs and reselect on KPI.
 Resume is an extension of the current iteration, not the initialization of the
 next iteration.
 
+## Shared-memory unlink failure
+
+A traceback containing `RuntimeError: could not unlink the shared memory file
+/torch_*` can leave a multi-worker job alive but no longer advancing. Treat
+this as a PyTorch `DataLoader` IPC cleanup failure, not a model, dataset,
+CUDA, NCCL, or checkpoint-corruption failure.
+
+Confirm that checkpoints and validation metrics have stopped advancing — do
+not infer a hang from scheduler state alone — then cancel the hung job and
+open a new job-record. Resume the same iteration with the same nested spec
+except `dataset.workers: 1` and `train.resume_training_checkpoint_path` set to
+the latest complete `model_epoch_*.pth`. Keep the original `train.num_epochs`.
+Require the resume log to confirm `Restored all states from the checkpoint`.
+A validation pass during restore is not a newly completed epoch.
+
+Do not restart the iteration from the frozen base checkpoint or initialize the
+next iteration from the interrupted weights. Record `workers: 1` as an
+operational override; it does not change the frozen training policy. Keep it
+for any late-best extension of that iteration, and reuse it on later
+iterations if the same cluster has already hit this fault.
+
 ## Selection and reporting
 
 KPI validation AP50 selects probe configuration when probes ran, plus epoch,
 extension, and the checkpoint carried into the next inference stage. Test
 metrics are computed only after the checkpoint is fixed and cannot influence
 any choice.
-
-The reference experiment's later weight-space search is outside this loop.
-Do not describe a post-training soup as an ordinary DEFT OD AOI iteration
-checkpoint or use its test metric to select weights.

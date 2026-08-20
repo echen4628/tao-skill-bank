@@ -1,5 +1,5 @@
 ## Description: <br>
-Runs or reproduces the binary RT-DETR DEFT OD AOI loop with loose and strict gap analysis, policy-routed real and clean mining, optional AnomalyGenNext synthesis, admission control, cumulative COCO assembly, and KPI-selected adaptive training. <br>
+Runs the binary RT-DETR DEFT OD AOI loop with manifest-driven multi-dataset intake, loose and strict gap analysis, policy-routed real and curated-clean mining, optional AnomalyGenNext synthesis, admission control, cumulative COCO assembly, and KPI-selected adaptive training. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -10,7 +10,7 @@ NVIDIA <br>
 Apache 2.0 <br>
 
 ## Use Case: <br>
-Developers and engineers reproducing the reference DEFT OD AOI policy or adapting its explicit FP/FN routing to a new binary RT-DETR defect-detection loop while preserving the canonical Grounding-DINO DEFT workflow separately. <br>
+Developers and engineers running an explicit FP/FN-routed binary RT-DETR defect-detection loop . <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -19,8 +19,8 @@ Global <br>
 Risk: Low-IoU false positives on defect-containing KPI images do not measure all false alarms on completely clean KPI images. <br>
 Mitigation: Report the analyzer's GT-present-class limitation and evaluate a dedicated clean set separately when clean-image false-alarm coverage matters. <br>
 
-Risk: Uniform mining or synthetic generation can dominate the data mix. <br>
-Mitigation: Freeze the uniform value, cumulative clean cap, cumulative synthetic cap, and generation enablement before launch; review routing and assembly reports every iteration. <br>
+Risk: Treating every boxless mining record as a known clean image can admit unlabeled defects. <br>
+Mitigation: The source manifest requires explicit `boxless_clean_coco` or `boxless_as_clean` authorization and records clean provenance. <br>
 
 Risk: KPI leakage or test-driven model selection can inflate reported quality. <br>
 Mitigation: Keep KPI pixels query-only, validate disjoint pools, select checkpoints on KPI only, and keep test report-only. <br>
@@ -36,7 +36,7 @@ Mitigation: Keep KPI pixels query-only, validate disjoint pools, select checkpoi
 - Codex (`codex`) <br>
 
 ## Evaluation Tasks: <br>
-Evaluated against 3 packaged planning and workflow-disambiguation tasks. <br>
+Evaluated against 5 packaged planning and workflow-disambiguation tasks. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: security, correctness, discoverability, effectiveness, and efficiency. <br>

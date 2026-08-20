@@ -46,6 +46,12 @@ The generic `tao-mine-nearest-neighbors` output is not currently suitable for
 this handoff because it collapses to unique source filepaths. AnomalyGenNext
 requires every FN-to-clean pair to remain explicit through AMP and provenance.
 
+The structured execution metadata is in `references/skill_info.yaml`. These
+actions use an external checkout and virtualenv rather than a bank-owned
+container image. Resolve the concrete interpreter during preflight and record
+that absolute interpreter path as the job `image`. Resolve relative `command`
+and script-default paths against this skill directory before staging.
+
 ## Inputs
 
 Pass one nested YAML config. Start from `assets/default_filtering.yaml` and set:

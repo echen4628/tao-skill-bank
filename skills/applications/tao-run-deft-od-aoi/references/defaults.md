@@ -15,37 +15,65 @@ once in `deft_od_aoi_policy.json`.
   not supplied and do not proceed past preflight without it. If the user gives
   a time or GPU-hour budget instead, convert it to an estimated iteration count
   and confirm.
-- **Four disjoint pools.** KPI, test, real-defect source, and clean-negative
-  binary COCO plus image roots. Validate with `scripts/validate_deft_od_aoi_inputs.py`.
+- **Dataset inputs.** Accept one or many dataset paths. Resolve a distinct KPI
+  role and test role, plus mining sources and known-clean sources. Paths may be
+  COCO files, dataset roots, or shard roots such as
+  `<root>/<benchmark>/{train,mine}.json`; do not ask the user to merge or split
+  them manually. Inventory paths with `inspect_deft_od_aoi_sources.py`, encode
+  path-to-texture/defect rules and clean provenance in `dataset_sources.json`,
+  prepare with `prepare_deft_od_aoi_sources.py`, then validate the four
+  canonical roles. Ask only when KPI/test identity or clean provenance cannot
+  be resolved safely from the inventory and user intent.
 - **Base checkpoint, if any.** Ask what RT-DETR checkpoint they already have.
-  Do not assume a warehouse file is on disk. Freeze one path as the train
-  initializer reused every iteration, plus the one-line `defect` class map.
-  Record the source as `user` or `ngc`.
+  Do not assume a file is on disk. Freeze one path as the train initializer
+  reused every iteration, plus the one-line `defect` class map. Record the
+  source as `user` or `ngc`.
   - a user path whose head already matches binary `defect` → run iteration 0
     inference on it;
-  - a user path that is a raw warehouse/NGC checkpoint with a mismatched head
-    → cold start: skip invalid baseline inference, seed iteration 1 from all
-    KPI GT boxes as FNs, and train from that file;
-  - no checkpoint → download the published ResNet-50 warehouse trainable from
-    NGC. Use the **trainable** version (not `deployable`; that is
-    TensorRT-only):
+  - a user path whose head does not match binary `defect` → cold start: skip
+    invalid baseline inference, seed iteration 1 from all KPI GT boxes as FNs,
+    and train from that file;
+  - no checkpoint → download the published NGC trainable (not `deployable`;
+    that is TensorRT-only) and treat it as the frozen base. This head is not
+    binary `defect`, so the path is a cold start:
 
     ```bash
     ngc registry model download-version \
       nvidia/tao/rtdetr_2d_warehouse:trainable_rn50_v1.0.2 \
-      --dest "${WORKSPACE}/checkpoints/rtdetr_warehouse"
+      --dest "${WORKSPACE}/checkpoints/rtdetr_base"
     ```
 
-    Requires the `ngc` CLI and a configured account. Reuse an existing `.pth`
-    under that dest if Pre-Flight already fetched it. On an air-gapped host,
-    the user supplies the file. That warehouse head is not binary `defect`,
-    so this path is always a cold start.
+    Requires the separately installed `ngc` CLI and a configured model-registry
+    account. Follow the NGC CLI gate in `preflight.md`; `NGC_KEY` availability
+    for container pulls is not an installation/configuration check for the CLI.
+    Reuse an existing `.pth` under that dest if Pre-Flight already fetched it.
+    On an air-gapped host, the user supplies a trainable checkpoint instead.
 - **KPI vs test roles.** One KPI set for selection; a separate test set for
   reporting only.
-- **Synthesis enablement.** `true` or `false`. If `true`, also require the
-  frozen generator-type list and AnomalyGenNext recipes, checkpoints, masks,
-  and defect specifications. Do not enable synthesis when those assets are
-  absent.
+- **Synthesis enablement.** `true` or `false`. Ask this only after the mask
+  prerequisite below is answered. If `true`, also require these AnomalyGenNext
+  assets and do not enable synthesis when any are absent. This loop never
+  fine-tunes AnomalyGenNext.
+  - **Pixel defect masks.** A prerequisite, not a default. AnomalyGenNext
+    stamps a defect onto a retrieved clean image with automatic mask
+    placement. A COCO box is not a mask. Ask whether the user's dataset has
+    per-pixel defect masks for the mining-pool defects — typically sibling
+    files next to those images (`ground_truth/<defect>/`, `*_mask.png`, or a
+    parallel mask tree). Those mining defects are the usual same-type mask
+    pool: one mask isolated to the missed FN box, plus other masks of the
+    same `TEXTURE+TYPE` sampled as placement templates. If the dataset has
+    boxes only, keep synthesis `false`. The derived `anomalygen_clean/` view
+    is clean images only and does not replace this pool.
+  - frozen generator-type list: the exact `TEXTURE+TYPE` strings the producer
+    can emit; routing requests only those types;
+  - `defect_spec.jsonl`: one row per selected type. A `spatial_dependency:
+    text` row must include a non-empty `roi_prompt_defect_location`. Do not
+    invent or repair prompts from the OD false negative;
+  - a task-fine-tuned AnomalyGenNext checkpoint and its matching recipe for
+    each dataset route. The recipe must declare the same types as
+    `defect_spec` and the frozen generator-type list;
+  - the Cosmos3-Nano base checkpoint and AnomalyGenNext checkout used by
+    `tao-generate-od-defects`.
 
 ## Defaults — never ask
 
@@ -63,9 +91,16 @@ so the user can override them; do not interrogate field by field.
 
 ### Routing and doses
 
-- `routing.uniform_mine` — 12 real images per pocket in iterations 1–2; `0`
-  afterward. Pass `--uniform-mine-per-pocket 0` to disable the gap-independent
-  top-up. A positive constant overrides the schedule for every iteration.
+- `retrieval.mode` — `siglip_only`; uniform/random bootstrap is disabled
+- `retrieval.model_path` — `google/siglip-base-patch16-224`
+- `retrieval.defect_context_scale` — `1.5`
+- `retrieval.clean_grids` — `[1, 2]` (whole image plus four quadrants)
+- `retrieval.output_size` — `224`
+- `retrieval.minimum_similarity` — `-1.0` for the first calibration run;
+  inspect the frozen retrieval audit before adopting a stricter cutoff
+- `retrieval.candidate_overfetch` — `15`
+- `retrieval.audit_top_k_per_query` — `20`
+
 - `routing.adaptive_conversion_prior` — `0.33` until a pocket has a trackable
   conversion rate
 - `routing.real_mine_factor_min` / `max` — `1` / `6` (about `1/conversion`)
@@ -91,7 +126,7 @@ Epochs are a function of iteration index and training-set size, not a user
 knob. Freeze this policy and let `scripts/write_rtdetr_specs.py` compute the
 count:
 
-- Iterations 1–2: skip probes; train **36** epochs from the warehouse
+- Iterations 1–2: skip probes; train **36** epochs from the frozen base
   checkpoint; pick the KPI-best epoch.
 - Iterations 3 and later, probes enabled: run **3** probes of **10** epochs
   (incumbent, data-growth-scaled, deterministic jitter). Keep the KPI-best

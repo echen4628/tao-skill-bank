@@ -18,7 +18,7 @@
   },
   {
     "id": "tao-run-deft-od-aoi-vs-canonical",
-    "question": "A user wants to preserve the original Grounding-DINO mining-only DEFT workflow and also reproduce the reference RT-DETR AOI experiment. Which skill should own each flow and why? Do not run commands or tools.",
+    "question": "A user wants to preserve the original Grounding-DINO mining-only DEFT workflow and also run the RT-DETR AOI workflow. Which skill should own each flow and why? Do not run commands or tools.",
     "expected_skill": "tao-run-deft-od-aoi",
     "expected_script": null,
     "ground_truth": "Keep tao-run-deft-object-detection as the canonical Grounding-DINO whole-image embedding/mining workflow. Use the separate tao-run-deft-od-aoi application for the binary RT-DETR cold-start loop with dual gap passes, FP/FN routing, clean negatives, optional AnomalyGenNext, admission, cumulative COCO, and adaptive training.",
@@ -27,6 +27,54 @@
       "Assigns DEFT OD AOI to tao-run-deft-od-aoi",
       "Names the DEFT OD AOI dual-threshold, clean-negative, synthetic, and fresh-base differences",
       "Does not merge DEFT OD AOI defaults into the canonical skill",
+      "Does not run commands or tools"
+    ]
+  },
+  {
+    "id": "tao-run-deft-od-aoi-generic-pool",
+    "question": "A user has KPI and test COCO datasets plus a directory containing multiple benchmark train.json and mine.json files. Defective and boxless clean images are mixed in those shards, and many images only have absolute source_path values. Explain how the DEFT OD AOI skill should ingest this data. Do not run commands or tools.",
+    "expected_skill": "tao-run-deft-od-aoi",
+    "expected_script": "scripts/prepare_deft_od_aoi_sources.py",
+    "ground_truth": "Inventory the supplied paths, author a strict dataset_sources.json, then use the bundled preparer. It preserves absolute source paths, sends annotated images to source.json, admits boxless images to clean.json only from explicitly authorized clean sources, derives texture/defect/generator provenance from named path rules, rejects identity overlap, and produces canonical inputs for validate_deft_od_aoi_inputs.py. SigLIP retrieval is global within the defect or clean role; metadata is not an eligibility filter. Do not ask the user to manually merge or split the shards.",
+    "expected_behavior": [
+      "Selects tao-run-deft-od-aoi",
+      "Uses inspect_deft_od_aoi_sources.py and prepare_deft_od_aoi_sources.py before strict validation",
+      "Classifies annotated images as defective but treats boxless images as clean only from explicitly authorized sources",
+      "Preserves absolute source_path values without copying image data",
+      "Uses strict named path rules for provenance and optional synthesis metadata",
+      "States that SigLIP candidate search is global within defect or clean role",
+      "Does not ask the user to manually merge or split COCO shards",
+      "Does not run commands or tools"
+    ]
+  },
+  {
+    "id": "tao-run-deft-od-aoi-normalized-four-pools",
+    "question": "A user already has four disjoint binary COCO files: kpi.json, test.json, source.json (every image has a defect box), and clean.json (zero annotations), plus image roots. They want to run DEFT OD AOI. Explain how intake should work. Do not run commands or tools.",
+    "expected_skill": "tao-run-deft-od-aoi",
+    "expected_script": "scripts/validate_deft_od_aoi_inputs.py",
+    "ground_truth": "Skip inspect/prepare and the source manifest. Validate the four canonical pools with validate_deft_od_aoi_inputs.py, confirm no identity overlap, keep KPI pixels out of training, and proceed to the launch review. Do not ask the user to merge, split, or re-tag images.",
+    "expected_behavior": [
+      "Selects tao-run-deft-od-aoi",
+      "Treats the four files as already-normalized KPI, test, defect-source, and clean roles",
+      "Validates with validate_deft_od_aoi_inputs.py rather than rewriting the pools",
+      "Does not run inspect_deft_od_aoi_sources.py or prepare_deft_od_aoi_sources.py as a required rewrite",
+      "Does not ask the user to merge shards or add per-image routing fields",
+      "Does not run commands or tools"
+    ]
+  },
+  {
+    "id": "tao-run-deft-od-aoi-boxless-provenance",
+    "question": "A user has mixed mining COCO shards where some images have defect boxes and others have no boxes. They say every boxless image is a clean negative. Explain the correct DEFT OD AOI intake. Do not run commands or tools.",
+    "expected_skill": "tao-run-deft-od-aoi",
+    "expected_script": "scripts/prepare_deft_od_aoi_sources.py",
+    "ground_truth": "Inventory paths, author a strict dataset_sources.json, and run prepare_deft_od_aoi_sources.py --check-only before materializing. Annotated images become the defect source. Boxless images become clean only when the manifest lists boxless_clean_coco or sets boxless_as_clean, or when they come from inputs.clean. Do not treat every boxless record as clean by default.",
+    "expected_behavior": [
+      "Selects tao-run-deft-od-aoi",
+      "Requires inspect_deft_od_aoi_sources.py and a strict dataset_sources.json",
+      "Sends boxed images to the defect source role",
+      "Admits boxless images as clean only with explicit manifest authorization",
+      "Rejects treating all boxless records as known-clean by default",
+      "Does not ask the user to split shards by hand",
       "Does not run commands or tools"
     ]
   }

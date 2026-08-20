@@ -1,6 +1,6 @@
 # DEFT OD AOI pipeline and artifacts
 
-Iteration 0 is warehouse-checkpoint inference plus loose and strict KPI gaps.
+Iteration 0 is base-checkpoint inference plus loose and strict KPI gaps.
 Training iteration N consumes gaps from iteration N-1, then produces the
 checkpoint, metrics, and gaps labeled N. A stage's output becomes input only
 after the platform reports `COMPLETE` and its artifact gate passes. Stage to
@@ -8,6 +8,7 @@ leaf-skill mapping is in `references/scripts-and-agents.md`.
 
 ## Contents
 
+- 0. Normalize and validate inputs
 - 1. Inference
 - 2. Dual gap analysis
 - 3. Route and admit real data
@@ -17,13 +18,24 @@ leaf-skill mapping is in `references/scripts-and-agents.md`.
 - 7. Measure, gap, and advance
 - Suggested result layout
 
+## 0. Inspect, prepare, and validate inputs
+
+For one or many dataset paths, run `inspect_deft_od_aoi_sources.py`, freeze a
+strict `dataset_sources.json`, and run `prepare_deft_od_aoi_sources.py` as
+specified in `references/preflight.md`. Gate on
+`source_preparation_report.json`, zero fallbacks, the frozen source manifest,
+and the four canonical COCO files, then run
+`validate_deft_od_aoi_inputs.py`. Downstream stages consume only this frozen
+view. Do not copy KPI or test images into training, infer clean status from an
+unapproved boxless source, or reinterpret metadata after iteration 0 begins.
+
 ## 1. Inference
 
 Invoke `tao-train-rtdetr` action `inference` on KPI and test with the selected
-checkpoint. Iteration 0 uses the frozen warehouse checkpoint; later inference
+checkpoint. Iteration 0 uses the frozen base checkpoint; later inference
 uses that iteration's KPI-selected checkpoint. Emit KITTI predictions with a
-threshold low enough to preserve candidates for both gap passes; the reference
-used 0.001. Preserve a one-line `defect` class map.
+threshold of 0.001 to preserve candidates for both gap passes. Preserve a
+one-line `defect` class map.
 
 ## 2. Dual gap analysis
 
@@ -43,14 +55,27 @@ Write both specs:
 Invoke `tao-analyze-gaps-od-map` once with each emitted
 `od_gap_spec.yaml`. Gate on both `box_gaps.parquet` files.
 
-## 3. Route and admit real data
+## 3. Embed, route, and admit real data
 
-Run `scripts/route_deft_od_aoi.py` with iteration N-1 loose and strict gap parquets,
-frozen policy, four pool paths, and the prior committed ledgers/index. For
-iteration 2 and later, pass strict gap N-2 as conversion-old and strict gap
+Once per frozen source view, run
+`scripts/prepare_deft_od_aoi_siglip_candidates.py`. This emits contextual GT
+crops for every source annotation and a 1×1 plus 2×2 patch set for every
+verified-clean image. Embed its parquet with `tao-generate-image-embeddings`
+using the policy's SigLIP model and model path.
+
+Each iteration, run `scripts/prepare_deft_od_aoi_siglip_queries.py` on the N-1
+loose and strict gap parquets, then embed that parquet with the exact same
+encoder. Run `scripts/route_deft_od_aoi_siglip.py` with both embedding
+parquets, frozen policy, four pool paths, and prior committed ledgers/index.
+For iteration 2 and later, pass strict gap N-2 as conversion-old and strict gap
 N-1 as conversion-new when both exist. When synthesis is enabled, also pass a
 frozen JSON array through `--valid-generator-types`; unsupported pockets remain
-real-mining routes and are reported rather than sent to a nonexistent model.
+real-mining routes and are not sent to a nonexistent model.
+
+This is a global search within two hard roles: FN/near-miss queries can select
+any defect source, and background-FP queries can select any verified-clean
+source. There is no uniform bootstrap and no benchmark/texture eligibility
+filter.
 
 Outputs:
 
@@ -61,6 +86,7 @@ routing/routing_report.json
 routing/defect_ledger.json
 routing/clean_ledger.json
 routing/admission_index.npy
+routing/retrieval_audit.parquet
 ```
 
 The manifest contains newly admitted real and clean images. Ledgers and the
@@ -69,7 +95,10 @@ route stage is committed.
 
 ## 4. Generate and admit synthetic data
 
-When `synthetic_plan.json` is non-empty, invoke these leaf skills in order:
+When `synthetic_plan.json` is non-empty, invoke these leaf skills in order
+using the AnomalyGenNext assets frozen at launch review (`defect_spec`,
+per-route fine-tuned checkpoint and recipe, Cosmos3-Nano base checkpoint, and
+AnomalyGenNext checkout). Do not invent types or checkpoints mid-loop.
 
 1. `tao-prepare-anomalygennext-inputs` for box-level strict-FN queries,
    pair-preserving clean retrieval, masks, and frozen testcases;
@@ -107,7 +136,7 @@ unique admitted sources.
 Use `scripts/write_rtdetr_specs.py` to emit nested main and inference specs.
 When `training.probes_enabled` is true, also emit three probe specs from
 iteration 3 onward. Each probe and main train is a separate job-record and
-starts from the frozen warehouse checkpoint. After probes,
+starts from the frozen base checkpoint. After probes,
 `scripts/select_deft_od_aoi_probe.py` applies the KPI-best deltas and frozen epoch
 budget to the main spec. If probes are disabled, skip that script; the main
 spec already has frozen learning rates and the size-based epoch budget.
@@ -131,6 +160,12 @@ contract before launch.
 
 ```text
 results_dir/
+  normalized_inputs/
+    dataset_sources.json
+    source_preparation_report.json
+    {kpi,test,source,clean}.json
+    {kpi_images,test_images}/
+    anomalygen_clean/<benchmark>_<texture>/clean_image/
   deft_od_aoi_policy.json
   input_validation.json
   iterations/iterN/

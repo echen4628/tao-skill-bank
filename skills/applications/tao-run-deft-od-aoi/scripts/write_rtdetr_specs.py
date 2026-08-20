@@ -80,6 +80,30 @@ def dump_json(path: Path, value: Any) -> None:
     os.replace(temporary, path)
 
 
+def write_binary_inference_classmap(
+    source: str, output: Path, class_name: str
+) -> str:
+    lines = [
+        line.strip()
+        for line in Path(source).read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    if lines == [class_name]:
+        normalized = ["background", class_name]
+    elif len(lines) == 2 and lines[0] in {"background", "__background__"} and lines[1] == class_name:
+        normalized = ["background", class_name]
+    else:
+        raise ValueError(
+            "binary RT-DETR inference classmap must contain either the defect "
+            f"class alone or background plus {class_name!r}; got {lines!r}"
+        )
+    path = output / "inference_classmap.txt"
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text("\n".join(normalized) + "\n", encoding="utf-8")
+    os.replace(temporary, path)
+    return str(path)
+
+
 def base_train_spec(
     policy: dict[str, Any],
     *,
@@ -152,6 +176,7 @@ def inference_spec(
                 "classmap": classmap,
             },
             "num_classes": 2,
+            "eval_class_ids": [1],
             "batch_size": inference["batch_size"],
             "workers": inference["workers"],
             "remap_mscoco_category": False,
@@ -174,7 +199,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     kpi_coco = absolute_file(args.kpi_coco)
     kpi_images = absolute_dir(args.kpi_images_dir)
     test_images = absolute_dir(args.test_images_dir)
-    classmap = absolute_file(args.classmap)
+    classmap_source = absolute_file(args.classmap)
     checkpoint = absolute_file(args.base_checkpoint)
     train_size = len(read_json(train_coco).get("images", []))
     if train_size < 1:
@@ -182,6 +207,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     output = Path(args.output_dir).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
+    classmap = write_binary_inference_classmap(
+        classmap_source, output, policy["task"]["class_name"]
+    )
     results = Path(args.results_root).expanduser().resolve()
     train_spec = base_train_spec(
         policy,

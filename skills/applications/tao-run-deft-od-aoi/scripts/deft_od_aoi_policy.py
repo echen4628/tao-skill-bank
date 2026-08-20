@@ -12,64 +12,22 @@ from pathlib import Path
 from typing import Any
 
 
-REFERENCE_PROFILE = "deft_od_aoi_reference"
-CONFIGURABLE_PROFILE = "configurable"
-PROFILES = (REFERENCE_PROFILE, CONFIGURABLE_PROFILE)
-
-
 def build_policy(
     *,
-    profile: str,
     max_iterations: int,
-    uniform_mine_per_pocket: int | None,
     synthetic_enabled: bool | None = None,
     probes_enabled: bool | None = None,
 ) -> dict[str, Any]:
-    if profile not in PROFILES:
-        raise ValueError(f"unsupported profile {profile!r}; choose one of {PROFILES}")
     if max_iterations < 1:
         raise ValueError("max_iterations must be positive")
-
-    if profile == REFERENCE_PROFILE:
-        if max_iterations != 10:
-            raise ValueError("deft_od_aoi_reference requires max_iterations=10")
-        if uniform_mine_per_pocket is not None:
-            raise ValueError(
-                "deft_od_aoi_reference owns its uniform schedule; omit "
-                "uniform_mine_per_pocket"
-            )
-        if synthetic_enabled is not None:
-            raise ValueError(
-                "deft_od_aoi_reference owns synthesis enablement; omit synthetic_enabled"
-            )
-        uniform = {
-            "mode": "schedule",
-            "by_iteration": {"1": 12, "2": 12},
-            "default": 0,
-        }
-        synthetic_is_enabled = True
-    else:
-        if uniform_mine_per_pocket is None:
-            raise ValueError(
-                "configurable profile requires uniform_mine_per_pocket; use 0 to disable"
-            )
-        if uniform_mine_per_pocket < 0:
-            raise ValueError("uniform_mine_per_pocket cannot be negative")
-        uniform = {
-            "mode": "constant",
-            "per_pocket": int(uniform_mine_per_pocket),
-        }
-        if synthetic_enabled is None:
-            raise ValueError(
-                "configurable profile requires synthetic_enabled to be explicit"
-            )
-        synthetic_is_enabled = bool(synthetic_enabled)
+    if synthetic_enabled is None:
+        raise ValueError("synthetic_enabled must be explicit")
+    synthetic_is_enabled = bool(synthetic_enabled)
 
     probes_are_enabled = True if probes_enabled is None else bool(probes_enabled)
 
     policy: dict[str, Any] = {
-        "schema_version": 1,
-        "profile": profile,
+        "schema_version": 3,
         "max_iterations": int(max_iterations),
         "task": {"class_name": "defect", "binary": True},
         "data": {
@@ -107,7 +65,22 @@ def build_policy(
             "near_miss_real_cap_per_pocket": 20,
             "clean_factor": 2,
             "clean_cumulative_cap_per_real": 1.0,
-            "uniform_mine": uniform,
+            # Retained as a fixed compatibility field for the legacy router.
+            # The SigLIP-only workflow never performs gap-independent mining.
+            "uniform_mine": {"mode": "constant", "per_pocket": 0},
+        },
+        "retrieval": {
+            "mode": "siglip_only",
+            "model": "SigLIP",
+            "model_path": "google/siglip-base-patch16-224",
+            "defect_context_scale": 1.5,
+            "clean_grids": [1, 2],
+            "output_size": 224,
+            # Start without an uncalibrated cutoff. The retrieval audit records
+            # score distributions so a later run can freeze a justified value.
+            "minimum_similarity": -1.0,
+            "candidate_overfetch": 15,
+            "audit_top_k_per_query": 20,
         },
         "synthetic": {
             "enabled": synthetic_is_enabled,
@@ -175,10 +148,8 @@ def build_policy(
 
 
 def validate_policy(policy: dict[str, Any]) -> None:
-    if policy.get("schema_version") != 1:
+    if policy.get("schema_version") != 3:
         raise ValueError("unsupported DEFT OD AOI policy schema_version")
-    if policy.get("profile") not in PROFILES:
-        raise ValueError("invalid DEFT OD AOI profile")
     if int(policy.get("max_iterations", 0)) < 1:
         raise ValueError("max_iterations must be positive")
     training = policy.get("training") or {}
@@ -225,17 +196,36 @@ def validate_policy(policy: dict[str, Any]) -> None:
 
     uniform = routing.get("uniform_mine") or {}
     mode = uniform.get("mode")
-    if mode == "constant":
-        if int(uniform.get("per_pocket", -1)) < 0:
-            raise ValueError("uniform per-pocket value cannot be negative")
-    elif mode == "schedule":
-        if int(uniform.get("default", -1)) < 0:
-            raise ValueError("uniform schedule default cannot be negative")
-        for iteration, value in (uniform.get("by_iteration") or {}).items():
-            if int(iteration) < 1 or int(value) < 0:
-                raise ValueError("uniform schedule requires positive iterations and nonnegative values")
-    else:
-        raise ValueError("uniform_mine.mode must be constant or schedule")
+    if mode != "constant":
+        raise ValueError("uniform_mine.mode must be constant")
+    if int(uniform.get("per_pocket", -1)) < 0:
+        raise ValueError("uniform per-pocket value cannot be negative")
+    if int(uniform["per_pocket"]) != 0:
+        raise ValueError("SigLIP-only routing requires uniform mining to be disabled")
+
+    retrieval = policy.get("retrieval") or {}
+    if retrieval.get("mode") != "siglip_only":
+        raise ValueError("retrieval.mode must be siglip_only")
+    if retrieval.get("model") != "SigLIP":
+        raise ValueError("retrieval.model must be SigLIP")
+    if not str(retrieval.get("model_path", "")).strip():
+        raise ValueError("retrieval.model_path is required")
+    if float(retrieval.get("defect_context_scale", 0)) < 1:
+        raise ValueError("retrieval.defect_context_scale must be at least 1")
+    clean_grids = retrieval.get("clean_grids")
+    if not isinstance(clean_grids, list) or not clean_grids:
+        raise ValueError("retrieval.clean_grids must be a non-empty list")
+    if any(int(value) < 1 for value in clean_grids):
+        raise ValueError("retrieval.clean_grids values must be positive")
+    if int(retrieval.get("output_size", 0)) < 1:
+        raise ValueError("retrieval.output_size must be positive")
+    similarity = float(retrieval.get("minimum_similarity", -2))
+    if not -1 <= similarity <= 1:
+        raise ValueError("retrieval.minimum_similarity must be within [-1, 1]")
+    if int(retrieval.get("candidate_overfetch", 0)) < 1:
+        raise ValueError("retrieval.candidate_overfetch must be positive")
+    if int(retrieval.get("audit_top_k_per_query", 0)) < 1:
+        raise ValueError("retrieval.audit_top_k_per_query must be positive")
 
 
 def probes_active(policy: dict[str, Any], iteration: int) -> bool:
@@ -268,9 +258,7 @@ def uniform_mine_for_iteration(policy: dict[str, Any], iteration: int) -> int:
         raise ValueError("iteration must be positive")
     validate_policy(policy)
     uniform = policy["routing"]["uniform_mine"]
-    if uniform["mode"] == "constant":
-        return int(uniform["per_pocket"])
-    return int(uniform.get("by_iteration", {}).get(str(iteration), uniform["default"]))
+    return int(uniform["per_pocket"])
 
 
 def load_policy(path: str | Path) -> dict[str, Any]:

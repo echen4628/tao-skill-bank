@@ -36,6 +36,11 @@ def write_mask(path: Path, offset: int = 8) -> None:
     Image.fromarray(mask).save(path)
 
 
+def write_full_mask(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(np.full((32, 32), 255, dtype=np.uint8)).save(path)
+
+
 class PipelineContractTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -141,7 +146,7 @@ class PipelineContractTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def _run_preparation(self) -> None:
+    def _run_preparation(self, full_mask_clean_stem: str | None = None) -> None:
         pipeline.prepare_inputs(
             type("Args", (), {"config": str(self.config), "run_root": str(self.run)})()
         )
@@ -168,7 +173,10 @@ class PipelineContractTest(unittest.TestCase):
                 / row["defect_type"]
                 / f"{Path(row['submask']).stem}__seed0.png"
             )
-            write_mask(output)
+            if Path(row["clean_image"]).stem == full_mask_clean_stem:
+                write_full_mask(output)
+            else:
+                write_mask(output)
             amp_rows.append(
                 {
                     "image_filename": row["clean_image"],
@@ -201,6 +209,22 @@ class PipelineContractTest(unittest.TestCase):
         )
         self.assertEqual(len(rows), 4)
         pipeline.validate_prepared_inputs(type("Args", (), {"prepared_inputs_root": str(self.run)})())
+
+    def test_full_image_amp_mask_rejects_candidate_and_uses_next_neighbor(self) -> None:
+        self._run_preparation(full_mask_clean_stem="clean0")
+        selected = pd.read_parquet(self.run / "manifests" / "selected_pairs.parquet")
+        self.assertEqual(len(selected), 2)
+        self.assertEqual(
+            {Path(path).stem for path in selected["clean_filepath"]},
+            {"clean1", "clean2"},
+        )
+        status = pd.read_parquet(self.run / "manifests" / "knn_roi_status.parquet")
+        rejected = status[status["clean_filepath"].map(lambda path: Path(path).stem == "clean0")]
+        self.assertEqual(len(rejected), 1)
+        self.assertEqual(
+            rejected.iloc[0]["selection_reason"],
+            "invalid_aligned_mask:fn_mask:full_image",
+        )
 
     def test_source_tag_is_optional_provenance(self) -> None:
         config = yaml.safe_load(self.config.read_text())
@@ -362,19 +386,19 @@ class PipelineContractTest(unittest.TestCase):
             )
 
     def test_type_and_mask_supports_component_replacement_and_fixed_class(self) -> None:
-        image = self.root / "DAGM_2007" / "images" / "Class7" / "Train" / "0034.PNG"
+        image = self.root / "TextureSet" / "images" / "ClassA" / "Train" / "0034.PNG"
         expected_mask = (
-            self.root / "DAGM_2007" / "masks" / "Class7" / "Train" / "0034_label.PNG"
+            self.root / "TextureSet" / "masks" / "ClassA" / "Train" / "0034_label.PNG"
         )
         write_image(image)
         write_mask(expected_mask)
         texture, defect_class, mask = pipeline._type_and_mask(
             str(image),
-            "dagm",
+            "texture_set",
             {
-                "path_marker": "DAGM_2007",
+                "path_marker": "TextureSet",
                 "texture_offset": 2,
-                "texture_prefix": "dagm_",
+                "texture_prefix": "texture_set_",
                 "split_components": ["Test", "Train"],
                 "defect_class_fixed": "defect",
                 "mask_style": "configurable",
@@ -383,7 +407,7 @@ class PipelineContractTest(unittest.TestCase):
                 "mask_extensions": [".PNG"],
             },
         )
-        self.assertEqual(texture, "dagm_Class7")
+        self.assertEqual(texture, "texture_set_ClassA")
         self.assertEqual(defect_class, "defect")
         self.assertEqual(mask, expected_mask)
 
