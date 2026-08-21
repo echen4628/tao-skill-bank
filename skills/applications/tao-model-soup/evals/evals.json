@@ -1,0 +1,47 @@
+[
+  {
+    "id": "tao-model-soup-uniform",
+    "question": "I have three TAO RT-DETR checkpoints trained from the same base and want one uniform model soup. Explain the safe workflow and command. Do not run commands or tools.",
+    "expected_skill": "tao-model-soup",
+    "expected_script": "scripts/tao_model_soup.py",
+    "ground_truth": "Preflight the user-selected platform, verify trusted compatible RT-DETR checkpoints, launch the one-file CLI with --method uniform and repeated --checkpoint arguments, then gate on model_soup.pth and soup_manifest.json before independent evaluation.",
+    "expected_behavior": [
+      "Selects tao-model-soup",
+      "Asks which platform to use instead of defaulting",
+      "Requires the same architecture, class head, state-dict keys, shapes, and dtypes",
+      "Uses repeated --checkpoint values with --method uniform",
+      "Explains that the output is one checkpoint rather than an inference ensemble",
+      "Requires evaluation of the frozen output before claiming improvement",
+      "Does not run commands or tools"
+    ]
+  },
+  {
+    "id": "tao-model-soup-greedy-test-leakage",
+    "question": "Use TAO model soup to pick a greedy combination of five RT-DETR checkpoints. I only have a test set, so use it for ingredient selection. Do not run commands or tools.",
+    "expected_skill": "tao-model-soup",
+    "expected_script": null,
+    "ground_truth": "Do not use a sealed test set for greedy selection. Require a held-out KPI or validation split, evaluate individuals and candidate equal-weight soups there, freeze the final method and ingredients, and only then report test performance.",
+    "expected_behavior": [
+      "Selects tao-model-soup",
+      "Refuses test-driven ingredient or method selection",
+      "Requests or derives a held-out KPI/validation split before greedy selection",
+      "Describes best-individual seeding and strictly improving equal-weight candidates",
+      "Keeps final test evaluation report-only",
+      "Does not run commands or tools"
+    ]
+  },
+  {
+    "id": "tao-model-soup-incompatible",
+    "question": "Can tao-model-soup average an RT-DETR binary checkpoint with an 80-class RT-DETR checkpoint if both files end in .pth? Do not run commands or tools.",
+    "expected_skill": "tao-model-soup",
+    "expected_script": null,
+    "ground_truth": "No. Matching file extensions are insufficient. Different class heads change tensor shapes and semantics, and the compatibility gate must reject them before evaluation or averaging.",
+    "expected_behavior": [
+      "Selects tao-model-soup",
+      "Rejects averaging the binary and 80-class heads",
+      "Explains that architecture, state-dict keys, shapes, dtypes, and class semantics must match",
+      "Does not suggest bypassing the compatibility gate",
+      "Does not run commands or tools"
+    ]
+  }
+]

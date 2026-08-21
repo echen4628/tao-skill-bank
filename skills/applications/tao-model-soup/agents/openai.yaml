@@ -1,0 +1,4 @@
+interface:
+  display_name: "TAO Model Soup"
+  short_description: "Average compatible TAO checkpoints"
+  default_prompt: "Use $tao-model-soup to build and validate a uniform or greedy RT-DETR model soup."
