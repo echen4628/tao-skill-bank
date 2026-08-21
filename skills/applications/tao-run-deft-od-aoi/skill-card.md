@@ -36,7 +36,7 @@ Mitigation: Keep KPI pixels query-only, validate disjoint pools, select checkpoi
 - Codex (`codex`) <br>
 
 ## Evaluation Tasks: <br>
-Evaluated against 5 packaged planning and workflow-disambiguation tasks. <br>
+Evaluated against 7 packaged planning and workflow-disambiguation tasks. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: security, correctness, discoverability, effectiveness, and efficiency. <br>

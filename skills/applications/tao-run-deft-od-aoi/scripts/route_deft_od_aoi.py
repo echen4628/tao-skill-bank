@@ -350,17 +350,18 @@ class Admission:
             if len(admitted) >= quota:
                 break
             self.report["checked"] += 1
+            runtime_path = candidate.get("runtime_path", candidate["source_path"])
             if not clean:
                 candidate = {
                     **candidate,
                     "boxes": self._screen_boxes(
-                        candidate["boxes"], candidate["source_path"]
+                        candidate["boxes"], runtime_path
                     ),
                 }
                 if not candidate["boxes"]:
                     self.report["rejected_no_valid_boxes"] += 1
                     continue
-            signature = _combined_signature(candidate["source_path"], candidate["boxes"])
+            signature = _combined_signature(runtime_path, candidate["boxes"])
             if signature is not None and self._duplicate(signature, clean):
                 self.report["rejected_duplicate"] += 1
                 continue
@@ -382,6 +383,7 @@ class Admission:
                     cluster[1] += 1
                 else:
                     clusters.append([global_signature, 1])
+            candidate.pop("runtime_path", None)
             admitted.append(candidate)
             if signature is not None:
                 self.pending.append(signature)
@@ -415,8 +417,10 @@ def _index_coco(coco: dict, images_dir: Path, *, clean: bool) -> dict:
         if not clean and not boxes:
             continue
         path = _source_path(images_dir, image)
-        if not Path(path).is_file():
-            raise FileNotFoundError(f"COCO image is missing: {path}")
+        runtime = images_dir / Path(str(image.get("file_name", ""))).name
+        runtime_path = str(runtime) if runtime.is_file() else path
+        if not Path(runtime_path).is_file():
+            raise FileNotFoundError(f"COCO image is missing: durable={path} runtime={runtime_path}")
         record = {
             "source_path": path,
             "width": int(image["width"]),
@@ -428,6 +432,8 @@ def _index_coco(coco: dict, images_dir: Path, *, clean: bool) -> dict:
             "generator_type": metadata["generator_type"],
             "kind": "clean_negative" if clean else "real_defect",
         }
+        if runtime_path != path:
+            record["runtime_path"] = runtime_path
         records.append(record)
     return {"records": records, "annotations_by_image": annotations_by_image}
 

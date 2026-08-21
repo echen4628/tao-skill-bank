@@ -15,7 +15,9 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import random
+import shutil
 from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Iterable
@@ -28,6 +30,13 @@ from PIL import Image
 
 IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
 BRANCHES = ("fn_mask", "same_type_sampled_mask")
+AOI_DATASET_MARKERS = {
+    "/MVTec-AD/": "mvtec",
+    "/VisA/": "visa",
+    "/DAGM_2007/": "dagm",
+    "/BTAD/": "btad",
+    "/MPDD/": "mpdd",
+}
 
 
 def _jsonable(value: Any) -> Any:
@@ -264,7 +273,7 @@ def _split_metadata(split_root: Path, datasets: dict[str, Any]) -> dict[str, dic
 
 def prepare_inputs(args: argparse.Namespace) -> None:
     config = _load_config(args.config)
-    config_path = Path(args.config).resolve()
+    source_config_path = Path(args.config).resolve()
     run = Path(args.run_root)
     for path in (
         run / "manifests",
@@ -275,6 +284,9 @@ def prepare_inputs(args: argparse.Namespace) -> None:
         run / "logs",
     ):
         path.mkdir(parents=True, exist_ok=True)
+    config_path = run / "prepared_anomalygennext_inputs" / "filtering_config.yaml"
+    if source_config_path != config_path.resolve():
+        shutil.copy2(source_config_path, config_path)
 
     gaps_path = Path(config["gap_parquet"])
     gaps = pd.read_parquet(gaps_path)
@@ -895,10 +907,227 @@ def validate_prepared_inputs(args: argparse.Namespace) -> None:
     manifest_path = (
         root / "prepared_anomalygennext_inputs" / "prepared_inputs_manifest.json"
     )
-    print(
-        f"prepared-input gate PASS: rows={manifest['generator_row_count']} "
-        f"sha256={_sha256(manifest_path)}"
+
+
+def _aoi_dataset_for_path(path: str) -> str:
+    matches = [dataset for marker, dataset in AOI_DATASET_MARKERS.items() if marker in path]
+    if len(matches) != 1:
+        raise ValueError(f"expected exactly one supported AOI dataset marker in {path!r}")
+    return matches[0]
+
+
+def materialize_aoi_plan(args: argparse.Namespace) -> None:
+    """Turn an AOI synthetic plan into this skill's complete host input config."""
+    output = Path(args.output_root).expanduser().resolve()
+    output.mkdir(parents=True, exist_ok=False)
+    split_root = output / "split_manifests"
+    split_root.mkdir()
+    coco = json.loads(Path(args.kpi_coco).read_text(encoding="utf-8"))
+    images = {int(row["id"]): row for row in coco["images"]}
+    plan = {str(key): int(value) for key, value in json.loads(Path(args.synthetic_plan).read_text()).items()}
+    all_gaps = pd.read_parquet(args.strict_gaps).copy()
+    if "gap_type" not in all_gaps:
+        raise ValueError("strict gap input lacks gap_type")
+    gap_types = all_gaps["gap_type"].astype(str).str.upper()
+    unknown = sorted(set(gap_types) - {"TP", "FP", "FN"})
+    if unknown:
+        raise ValueError(f"strict gap input contains unknown gap types: {unknown}")
+    gaps = all_gaps[gap_types.eq("FN")].copy()
+    if gaps.empty:
+        raise ValueError("strict gap input contains no FN rows")
+    gaps["generator_type"] = gaps["image_id"].map(
+        lambda value: images[int(value)]["deft_od_aoi"]["generator_type"]
     )
+    gaps["filepath"] = gaps["image_id"].map(lambda value: images[int(value)]["source_path"])
+    gaps["bbox_sort"] = gaps["bbox"].map(
+        lambda value: json.dumps([float(item) for item in value], separators=(",", ":"))
+    )
+    selected_parts: list[pd.DataFrame] = []
+    report_rows = []
+    for anomaly_type, requested in sorted(plan.items()):
+        available = gaps[gaps["generator_type"] == anomaly_type].sort_values(
+            ["image_id", "filepath", "bbox_sort"], kind="stable"
+        )
+        # Every FN produces the two required independent mask branches.
+        pair_count = min(len(available), requested // 2)
+        selected_parts.append(available.head(pair_count))
+        report_rows.append(
+            {
+                "anomaly_type": anomaly_type,
+                "available_fn_boxes": int(len(available)),
+                "requested_images": requested,
+                "selected_pairs": int(pair_count),
+                "frozen_generator_rows": int(pair_count * 2),
+                "bounded_shortfall": int(requested - pair_count * 2),
+            }
+        )
+    selected = pd.concat(selected_parts, ignore_index=True) if selected_parts else pd.DataFrame()
+    if selected.empty:
+        raise ValueError("synthetic plan yielded no pair-preserving rows")
+    selected = selected.drop(columns=["generator_type", "bbox_sort"])
+    frozen_gaps = output / "strict_fn_synthesis_subset.parquet"
+    selected.to_parquet(frozen_gaps, index=False)
+    split_rows: dict[str, dict[str, dict[str, str]]] = defaultdict(dict)
+    for row in selected.to_dict("records"):
+        source = str(row["filepath"])
+        if not Path(source).is_file():
+            raise FileNotFoundError(source)
+        dataset = _aoi_dataset_for_path(source)
+        split_rows[dataset][f"image-{int(row['image_id'])}"] = {"source_path": source, "bucket": "kpi"}
+    for dataset, rows in split_rows.items():
+        directory = split_root / dataset
+        directory.mkdir()
+        _write_json(directory / "split_manifest.json", rows)
+    checkpoint = str(Path(args.checkpoint).resolve())
+    recipe = str(Path(args.recipe).resolve())
+    common = {"checkpoint": checkpoint, "recipe": recipe}
+    datasets = {
+        "mvtec": {**common, "path_marker": "MVTec-AD", "texture_offset": 1, "texture_prefix": "mvtec_", "split_components": ["test"], "mask_style": "stem_mask_png"},
+        "visa": {**common, "path_marker": "VisA", "texture_offset": 1, "texture_prefix": "visa_", "split_components": ["test"], "mask_style": "stem_png", "mask_extensions": [".png"]},
+        "dagm": {**common, "path_marker": "DAGM_2007", "texture_offset": 2, "texture_prefix": "dagm_", "split_components": ["Test", "Train"], "defect_class_fixed": "defect", "mask_component_replacements": {"images": "masks"}, "mask_style": "configurable", "mask_suffix": "_label", "mask_extensions": [".PNG", ".png"]},
+        "btad": {**common, "path_marker": "BTAD", "texture_offset": 2, "texture_prefix": "btad_", "split_components": ["test"], "defect_class_fixed": "ko", "mask_component_replacements": {"images": "masks", "test": "ground_truth"}, "mask_style": "stem_png", "mask_extensions": [".png", ".bmp"]},
+        "mpdd": {**common, "path_marker": "MPDD", "texture_offset": 1, "texture_prefix": "mpdd_", "split_components": ["test"], "mask_style": "stem_mask_png"},
+    }
+    active = sorted(split_rows)
+    config = {
+        "source_tag": f"deft_od_aoi_iter{args.iteration}_frozen_synthetic_plan",
+        "gap_parquet": str(frozen_gaps),
+        "split_root": str(split_root),
+        "pool_dataset_root": str(Path(args.pool_root).resolve()),
+        "defect_spec": str(Path(args.defect_spec).resolve()),
+        "datasets": {key: datasets[key] for key in active},
+        "selection": {"mode": "all_eligible", "datasets": active, "mask_sample_seed": args.mask_sample_seed},
+        "embedding": {"model": "SigLIP", "model_path": str(Path(args.embedding_model_path).resolve()), "batch_size": args.embedding_batch_size},
+        "retrieval": {"metric": "cosine", "candidate_topn": args.candidate_topn, "max_neighbors_per_fn": 1, "min_similarity": args.min_similarity, "prior_clean_exclusion_manifest": ""},
+    }
+    config_path = output / "filtering_config.yaml"
+    config_path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
+    report = {
+        "status": "COMPLETE",
+        "iteration": int(args.iteration),
+        "selected_fn_pairs": int(len(selected)),
+        "input_gap_rows": int(len(all_gaps)),
+        "input_fn_rows": int(len(gaps)),
+        "frozen_generator_rows": int(len(selected) * 2),
+        "bounded_shortfall": int(sum(plan.values()) - len(selected) * 2),
+        "active_datasets": active,
+        "filtering_config": str(config_path),
+        "frozen_gaps": str(frozen_gaps),
+        "per_type": report_rows,
+    }
+    _write_json(output / "selection_report.json", report)
+    print(json.dumps({key: value for key, value in report.items() if key != "per_type"}, indent=2))
+
+
+def stage_embedding(args: argparse.Namespace) -> None:
+    spec = yaml.safe_load(Path(args.source_spec).read_text(encoding="utf-8"))
+    frame = pd.read_parquet(spec["input_parquet"]).copy()
+    if frame.empty or "filepath" not in frame:
+        raise ValueError("embedding input is empty or lacks filepath")
+    images = Path(args.stage_root) / "images"
+    images.mkdir(parents=True, exist_ok=True)
+    mapping = []
+    local_paths = []
+    for index, durable in enumerate(frame["filepath"].astype(str)):
+        source = Path(durable)
+        if not source.is_file():
+            raise FileNotFoundError(source)
+        local = images / f"{index:07d}{source.suffix.lower()}"
+        shutil.copy2(source, local)
+        mapping.append({"local_filepath": str(local), "durable_filepath": durable})
+        local_paths.append(str(local))
+    frame["filepath"] = local_paths
+    local_input = Path(args.stage_root) / "input.parquet"
+    frame.to_parquet(local_input, index=False)
+    pd.DataFrame(mapping).to_parquet(args.mapping, index=False)
+    spec.update({"input_parquet": str(local_input), "output_parquet": str(Path(args.local_output)), "model_path": str(Path(args.model_path))})
+    Path(args.output_spec).write_text(yaml.safe_dump(spec, sort_keys=False), encoding="utf-8")
+    print(f"staged_embedding_inputs={len(frame)}")
+
+
+def restore_embedding(args: argparse.Namespace) -> None:
+    frame = pd.read_parquet(args.embedding_parquet).copy()
+    mapping = pd.read_parquet(args.mapping)
+    lookup = dict(zip(mapping["local_filepath"].astype(str), mapping["durable_filepath"].astype(str)))
+    missing = sorted(set(frame["filepath"].astype(str)) - set(lookup))
+    if missing:
+        raise ValueError(f"embedding outputs contain unmapped local paths: {missing[:5]}")
+    frame["filepath"] = frame["filepath"].astype(str).map(lookup)
+    if frame.empty or "embedding" not in frame:
+        raise ValueError("embedding output is empty or lacks embedding")
+    target = Path(args.durable_output)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(target.suffix + ".tmp")
+    frame.to_parquet(temporary, index=False)
+    os.replace(temporary, target)
+    if frame["filepath"].astype(str).str.startswith("/raid/scratch/").any():
+        raise ValueError("durable embedding parquet still references node-local scratch")
+    print(f"restored_embedding_rows={len(frame)}")
+
+
+def _stable_local_name(path: str) -> str:
+    source = Path(path)
+    return f"{hashlib.sha256(path.encode()).hexdigest()[:20]}{source.suffix.lower()}"
+
+
+def stage_amp(args: argparse.Namespace) -> None:
+    rows = json.loads(Path(args.amp_samples).read_text(encoding="utf-8"))
+    durable_root = Path(args.durable_run_root).resolve()
+    scratch_root = Path(args.scratch_run_root).resolve()
+    hot = Path(args.hot_root).resolve()
+    clean_root, mask_root = hot / "clean", hot / "masks"
+    clean_root.mkdir(parents=True, exist_ok=True)
+    mask_root.mkdir(parents=True, exist_ok=True)
+    clean_map: dict[str, str] = {}
+    rewritten = []
+    for row in rows:
+        item = dict(row)
+        durable_clean = str(row["clean_image"])
+        local_clean = clean_root / _stable_local_name(durable_clean)
+        if not local_clean.is_file():
+            shutil.copy2(durable_clean, local_clean)
+        clean_map[str(local_clean)] = durable_clean
+        item["clean_image"] = str(local_clean)
+        durable_mask = Path(str(row["submask"])).resolve()
+        try:
+            local_mask = scratch_root / durable_mask.relative_to(durable_root)
+            if not local_mask.is_file():
+                raise FileNotFoundError(local_mask)
+        except ValueError:
+            local_mask = mask_root / _stable_local_name(str(durable_mask))
+            if not local_mask.is_file():
+                shutil.copy2(durable_mask, local_mask)
+        item["submask"] = str(local_mask)
+        rewritten.append(item)
+    Path(args.output_json).write_text(json.dumps(rewritten, indent=2) + "\n", encoding="utf-8")
+    _write_json(Path(args.mapping_json), {"clean": clean_map, "rows": len(rewritten)})
+    print(f"staged_amp_rows={len(rewritten)} unique_clean={len(clean_map)}")
+
+
+def restore_amp(args: argparse.Namespace) -> None:
+    mapping = json.loads(Path(args.mapping_json).read_text(encoding="utf-8"))["clean"]
+    local_amp = Path(args.local_amp_root).resolve()
+    durable_amp = Path(args.durable_amp_root).resolve()
+    restored = []
+    for row in _read_jsonl(Path(args.source_testcase)):
+        local_image = str(Path(str(row["image_filename"])).resolve())
+        if local_image not in mapping:
+            raise ValueError(f"AMP testcase has unmapped clean image: {local_image}")
+        row["image_filename"] = mapping[local_image]
+        local_mask = Path(str(row["mask_filename"])).resolve()
+        try:
+            relative = local_mask.relative_to(local_amp)
+        except ValueError as exc:
+            raise ValueError(f"AMP mask is outside local AMP root: {local_mask}") from exc
+        durable_mask = durable_amp / relative
+        if not durable_mask.is_file():
+            raise FileNotFoundError(durable_mask)
+        row["mask_filename"] = str(durable_mask)
+        restored.append(row)
+    if not restored:
+        raise ValueError("AMP testcase contains no rows")
+    _write_jsonl(Path(args.durable_testcase), restored)
+    print(f"restored_amp_testcase_rows={len(restored)}")
 
 
 def parser() -> argparse.ArgumentParser:
@@ -923,6 +1152,55 @@ def parser() -> argparse.ArgumentParser:
     command = commands.add_parser("validate-prepared-inputs")
     command.add_argument("--prepared-inputs-root", required=True)
     command.set_defaults(func=validate_prepared_inputs)
+
+    command = commands.add_parser("materialize-aoi-plan")
+    command.add_argument("--iteration", type=int, required=True)
+    command.add_argument("--kpi-coco", required=True)
+    command.add_argument("--strict-gaps", required=True)
+    command.add_argument("--synthetic-plan", required=True)
+    command.add_argument("--output-root", required=True)
+    command.add_argument("--pool-root", required=True)
+    command.add_argument("--defect-spec", required=True)
+    command.add_argument("--checkpoint", required=True)
+    command.add_argument("--recipe", required=True)
+    command.add_argument("--embedding-model-path", required=True)
+    command.add_argument("--candidate-topn", type=int, default=3)
+    command.add_argument("--min-similarity", type=float, default=-1.0)
+    command.add_argument("--mask-sample-seed", type=int, default=43)
+    command.add_argument("--embedding-batch-size", type=int, default=64)
+    command.set_defaults(func=materialize_aoi_plan)
+
+    command = commands.add_parser("stage-embedding")
+    command.add_argument("--source-spec", required=True)
+    command.add_argument("--stage-root", required=True)
+    command.add_argument("--model-path", required=True)
+    command.add_argument("--local-output", required=True)
+    command.add_argument("--output-spec", required=True)
+    command.add_argument("--mapping", required=True)
+    command.set_defaults(func=stage_embedding)
+
+    command = commands.add_parser("restore-embedding")
+    command.add_argument("--embedding-parquet", required=True)
+    command.add_argument("--mapping", required=True)
+    command.add_argument("--durable-output", required=True)
+    command.set_defaults(func=restore_embedding)
+
+    command = commands.add_parser("stage-amp")
+    command.add_argument("--amp-samples", required=True)
+    command.add_argument("--durable-run-root", required=True)
+    command.add_argument("--scratch-run-root", required=True)
+    command.add_argument("--hot-root", required=True)
+    command.add_argument("--output-json", required=True)
+    command.add_argument("--mapping-json", required=True)
+    command.set_defaults(func=stage_amp)
+
+    command = commands.add_parser("restore-amp")
+    command.add_argument("--source-testcase", required=True)
+    command.add_argument("--durable-testcase", required=True)
+    command.add_argument("--mapping-json", required=True)
+    command.add_argument("--local-amp-root", required=True)
+    command.add_argument("--durable-amp-root", required=True)
+    command.set_defaults(func=restore_amp)
 
     return root
 

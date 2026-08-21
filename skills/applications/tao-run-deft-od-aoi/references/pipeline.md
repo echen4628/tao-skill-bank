@@ -16,6 +16,7 @@ leaf-skill mapping is in `references/scripts-and-agents.md`.
 - 5. Assemble cumulative COCO
 - 6. Probe, train, and select
 - 7. Measure, gap, and advance
+- 8. Consolidate with model soup
 - Suggested result layout
 
 ## 0. Inspect, prepare, and validate inputs
@@ -46,14 +47,22 @@ Write both specs:
   <skill_root>/scripts/write_gap_specs.py \
   --policy "${RESULTS_DIR}/deft_od_aoi_policy.json" \
   --ground-truth-ann-path "${KPI_KITTI_LABELS}" \
+  --ground-truth-coco "${KPI_COCO}" \
   --inference-ann-path "${ITER_DIR}/inference/kpi/labels" \
   --images-dir "${KPI_IMAGES}" \
   --kpi "iter${ITERATION}" \
-  --output-dir "${ITER_DIR}/gaps"
+  --output-dir "${ITER_DIR}/gaps" \
+  --analyze-binary
 ```
 
-Invoke `tao-analyze-gaps-od-map` once with each emitted
-`od_gap_spec.yaml`. Gate on both `box_gaps.parquet` files.
+For this binary AOI workflow, `--analyze-binary` performs deterministic
+confidence-ranked IoU matching and writes both complete artifact sets in the
+same command. The two emitted `od_gap_spec.yaml` files remain available for an
+equivalent `tao-analyze-gaps-od-map` run when its action-capable image is
+installed. Gate on both `box_gaps.parquet` files.
+When `--ground-truth-coco` is supplied, the same command writes the exact
+binary KITTI projection (including empty label files for clean KPI images), so
+no separate converter is required.
 
 ## 3. Embed, route, and admit real data
 
@@ -63,10 +72,18 @@ crops for every source annotation and a 1×1 plus 2×2 patch set for every
 verified-clean image. Embed its parquet with `tao-generate-image-embeddings`
 using the policy's SigLIP model and model path.
 
-Each iteration, run `scripts/prepare_deft_od_aoi_siglip_queries.py` on the N-1
-loose and strict gap parquets, then embed that parquet with the exact same
-encoder. Run `scripts/route_deft_od_aoi_siglip.py` with both embedding
-parquets, frozen policy, four pool paths, and prior committed ledgers/index.
+Each iteration, use the single public driver
+`scripts/route_deft_od_aoi_iteration.py`. Its `prepare` command consumes the
+N-1 loose and strict gaps and writes query crops plus
+`specs/query_embeddings.yaml`. Submit that spec to
+`tao-generate-image-embeddings`, run `finalize-embeddings` to strip ephemeral
+node-local crop paths, then use the driver's `commit` command with
+the reusable candidate embeddings, frozen pools, and prior committed
+ledgers/index. `commit` performs the route artifact gate before marking
+`routing_state.json` complete.
+On SLURM, use the same driver's `stage-coco` command to materialize source and
+clean images from their frozen `source_path` entries onto node-local storage;
+no separate staging utility is required.
 For iteration 2 and later, pass strict gap N-2 as conversion-old and strict gap
 N-1 as conversion-new when both exist. When synthesis is enabled, also pass a
 frozen JSON array through `--valid-generator-types`; unsupported pockets remain
@@ -106,6 +123,13 @@ AnomalyGenNext checkout). Do not invent types or checkpoints mid-loop.
 3. `tao-generate-od-defects` for generation, pseudo-labeling, validation, and
    binary COCO output.
 
+Use the one `prepare_anomalygennext_inputs.py` entry point for host and SLURM
+handoffs: `materialize-aoi-plan`, `prepare-inputs`, `stage-embedding`,
+`restore-embedding`, `build-knn-and-amp`, `stage-amp`, `restore-amp`,
+`finalize-inputs`, and `validate-prepared-inputs`. This replaces run-local path
+remapping scripts. GPU embedding, AMP, and generation remain separate tracked
+jobs.
+
 Use only the per-pocket counts from the frozen synthetic plan. Generation may
 return fewer admitted images after validation; never fill the difference with
 unvalidated output. If synthesis is enabled and requested but produces no
@@ -134,12 +158,24 @@ unique admitted sources.
 ## 6. Probe, train, and select
 
 Use `scripts/write_rtdetr_specs.py` to emit nested main and inference specs.
+On clusters with known DataLoader shared-memory instability, pass
+`--training-workers 0`; the emitted manifest records the effective training and
+inference worker counts. See the RT-DETR
+recovery guidance in `references/training-policy.md` before resuming a failure.
 When `training.probes_enabled` is true, also emit three probe specs from
 iteration 3 onward. Each probe and main train is a separate job-record and
 starts from the frozen base checkpoint. After probes,
 `scripts/select_deft_od_aoi_probe.py` applies the KPI-best deltas and frozen epoch
 budget to the main spec. If probes are disabled, skip that script; the main
 spec already has frozen learning rates and the size-based epoch budget.
+
+On SLURM, render the packaged four-hour platform default unless the reviewed
+site policy says otherwise, and override a reused wrapper's static job name at
+submit time so it includes the actual iteration. After epoch 0, compare the
+structured ETA with the backend's real time limit plus copy-back margin. Follow
+the training-policy recovery procedure if the measured ETA no longer
+fits; do not infer the iteration from the wrapper filename or static SBATCH
+label.
 
 After the main job, run `scripts/select_deft_od_aoi_checkpoint.py`. When it emits
 `action: extend`, set `train.num_epochs` to `extended_num_epochs` and
@@ -155,6 +191,29 @@ Record both metrics, then create loose and strict KPI gaps labeled N. Route the
 next iteration only from those KPI gaps. Continue through `max_iterations`; a
 target metric is report-only unless the user froze a different stopping
 contract before launch.
+
+## 8. Consolidate with model soup
+
+After `max_iterations`, and only when `model_soup.enabled` is frozen true,
+invoke the separate `tao-model-soup` application. Supply every iteration's
+KPI-selected `model_epoch_*.pth` whose train job is `COMPLETE` and whose
+`selection.json` passed its artifact gate. Do not include the iteration-0 base
+checkpoint, failed or partial jobs, probe checkpoints, non-selected epoch
+checkpoints, or checkpoints with a different architecture or binary head.
+
+Use the frozen greedy method, KPI AP50, maximize direction, and strict
+zero-minimum improvement gate. The model-soup CLI reevaluates each individual
+checkpoint and every proposed equal-weight soup on KPI in one platform job;
+do not substitute already observed test metrics. Gate on the final
+`model_soup.pth`, its matching SHA-256 in `soup_manifest.json`, and its KPI
+score. If no proposal improves the best individual, the valid greedy result is
+that single best checkpoint represented in the final output.
+
+Once method and ingredients are frozen, evaluate the final soup once on test
+for reporting. Never compare the soup and a non-soup candidate on test and use
+that comparison to choose the deployed model. If fewer than two compatible
+iteration-selected checkpoints exist, record the stage as skipped instead of
+calling the soup CLI.
 
 ## Suggested result layout
 
@@ -175,7 +234,11 @@ results_dir/
     synthetic/
     train/{images,annotations.json,assembly_report.json}/
     probes/
-    main_train/
+    main/train/
     selection.json
     metrics.json
+  model_soup/
+    model_soup.pth
+    soup_manifest.json
+    evaluations/
 ```

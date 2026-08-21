@@ -19,8 +19,8 @@
 #SBATCH --cpus-per-task=@@CPUS_PER_TASK@@
 #SBATCH --time=@@TIME@@
 #SBATCH --wait-all-nodes=1
-#SBATCH --output=@@LOG_DIR@@/%x-%j/main.out
-#SBATCH --error=@@LOG_DIR@@/%x-%j/main.err
+#SBATCH --output=@@LOG_DIR@@/%x-%j.out
+#SBATCH --error=@@LOG_DIR@@/%x-%j.err
 #SBATCH --open-mode=append
 #SBATCH --requeue
 @@SBATCH_EXTRA@@

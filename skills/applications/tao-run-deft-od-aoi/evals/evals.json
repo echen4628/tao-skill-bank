@@ -1,5 +1,22 @@
 [
   {
+    "id": "tao-run-deft-od-aoi-binary-discovery",
+    "question": "A user asks: I want to train an object detection model via the DEFT framework for binary defect detection. Which skill should own this, and why? Do not run commands or tools.",
+    "expected_skill": "tao-run-deft-od-aoi",
+    "expected_script": null,
+    "ground_truth": "Select tao-run-deft-od-aoi. Binary inspection maps every localized anomaly to the single defect class and needs the RT-DETR AOI loop (dual gap passes, FP/FN routing, clean negatives, optional synthesis, KPI-only selection). Do not use tao-run-deft-object-detection (canonical / multiclass / Grounding DINO), tao-train-rtdetr (one-off train), or tao-run-deft-aoi (non-OD DEFT AOI).",
+    "expected_behavior": [
+      "Selects tao-run-deft-od-aoi as the orchestrator",
+      "Treats the request as binary inspection with a single defect class",
+      "Describes an iterative DEFT loop rather than one-off training",
+      "Does not select tao-run-deft-object-detection",
+      "Does not select tao-train-rtdetr as the owning skill",
+      "Does not select tao-run-deft-aoi",
+      "Does not ask whether the task is binary after the user already said binary",
+      "Does not run commands or tools"
+    ]
+  },
+  {
     "id": "tao-run-deft-od-aoi-routing",
     "question": "A user asks: Use the DEFT OD AOI skill and explain exactly what the confidence 0.3 and 0.8 gap passes do, including the IoU routes. Do not run commands or tools.",
     "expected_skill": "tao-run-deft-od-aoi",
@@ -75,6 +92,21 @@
       "Admits boxless images as clean only with explicit manifest authorization",
       "Rejects treating all boxless records as known-clean by default",
       "Does not ask the user to split shards by hand",
+      "Does not run commands or tools"
+    ]
+  },
+  {
+    "id": "tao-run-deft-od-aoi-final-model-soup",
+    "question": "Explain the final model-soup stage of TAO DEFT OD AOI, including which checkpoints it may use and how KPI and test are separated. Do not run commands or tools.",
+    "expected_skill": "tao-run-deft-od-aoi",
+    "expected_script": null,
+    "ground_truth": "After the final iteration, tao-model-soup greedily considers every compatible KPI-selected main checkpoint from completed iterations. It reevaluates individual and candidate equal-weight soups on KPI AP50, accepts strict improvements, freezes the manifest and hash, and only then evaluates the final soup once on report-only test.",
+    "expected_behavior": [
+      "Selects tao-run-deft-od-aoi and delegates the final stage to tao-model-soup",
+      "Uses only selected main checkpoints from completed training iterations",
+      "Excludes the base, probe, failed, partial, and incompatible checkpoints",
+      "Uses KPI AP50 for greedy ingredient selection",
+      "Keeps test report-only until the final soup is frozen",
       "Does not run commands or tools"
     ]
   }

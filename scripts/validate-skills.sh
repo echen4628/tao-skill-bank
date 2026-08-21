@@ -605,9 +605,15 @@ for path in iter_metadata_files():
                     continue
                 hf_model_owners.setdefault(model_id.casefold(), []).append((model_id, skill_dir))
 
+    execution_environment = info.get('execution_environment')
+    if execution_environment is not None and (
+        not isinstance(execution_environment, str) or not execution_environment.strip()
+    ):
+        print(f"ERROR: {path} — execution_environment must be a non-empty string", file=sys.stderr); errs += 1
+
     if isinstance(info.get('container_image'), str):
         validate_image(path, info['container_image'], 'container_image')
-    elif is_model_or_data and 'actions' in info:
+    elif is_model_or_data and 'actions' in info and execution_environment is None:
         print(f"WARN: {path} — has actions but no top-level container_image", file=sys.stderr)
 
     runtime_requirements = info.get('runtime_requirements')

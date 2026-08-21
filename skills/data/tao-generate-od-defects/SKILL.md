@@ -87,6 +87,24 @@ ordinary runs never overwrite another generation.
 Read `references/execution-contract.md` for the exact upstream commands and
 output accounting.
 
+For SLURM or another platform that requires node-local execution, use the same
+public Python driver to materialize a selected frozen plan below scratch before
+launching generation:
+
+```bash
+python "$GEN_SKILL/scripts/generate_od_defects.py" stage-runtime \
+  --inputs-dir /durable/prepared-inputs \
+  --runtime-root /raid/scratch/JOB/runtime-inputs \
+  --local-real-root /raid/scratch/JOB/real-pool \
+  --local-checkpoint /raid/scratch/JOB/task/checkpoint.pt \
+  --local-recipe /raid/scratch/JOB/task/recipe.yaml \
+  --datasets plant_a --output-tsv /raid/scratch/JOB/runtime-plan.tsv
+```
+
+This replaces run-local testcase-relocation helpers. It hash-validates the
+frozen input contract, copies only the selected images and masks, and emits the
+exact node-local paths consumed by generation.
+
 ## Workflow
 
 For each selected dataset group:

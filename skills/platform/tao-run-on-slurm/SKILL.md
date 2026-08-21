@@ -120,7 +120,7 @@ long queue waits are normal — do not stop on elapsed time.
 ### logs
 
 ```bash
-ssh $LOGIN "tail -n ${N:-200} <log_dir>/$JOB_ID-$SLURM_ID/main.out"   # SLURM auto-creates the %x-%j subdir
+ssh $LOGIN "tail -n ${N:-200} <log_dir>/$JOB_ID-$SLURM_ID.out"
 ```
 
 ### cancel
@@ -195,7 +195,10 @@ images the cached SQSH is reused unless `force_reconvert_latest` is enabled.
   monitoring is enabled. A final response is a detach action; use it only if the
   user asked to detach/stop or the job reached terminal state.
 - Logs are read over SSH from
-  `<job_dir>/slurm-logs/<slurm_job_name>-<slurm_job_id>/main.out` and `.err`.
+  `<job_dir>/slurm-logs/<slurm_job_name>-<slurm_job_id>.out` and `.err`.
+  The renderer must create `<job_dir>/slurm-logs` before submit. Do not put
+  `%x-%j` below a dynamic subdirectory: SLURM opens the log file itself but
+  does not create missing parent directories.
 - Cancel by looking up `backend_details.slurm_metadata.slurm_job_id` and running
   `scancel <slurm_job_id>` over SSH. Treat missing or already terminated jobs as
   successful cancellation.

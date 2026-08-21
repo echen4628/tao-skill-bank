@@ -27,6 +27,18 @@ paths, task-fine-tuned checkpoint, matched recipe, real-data root, anomaly
 types, and requested row count. Dataset subsets filter these rows without
 editing the plan.
 
+On shared-filesystem platforms, run `generate_od_defects.py stage-runtime`
+after copying the task checkpoint and recipe to node-local storage. The command
+revalidates the frozen manifest, copies the selected testcase images and masks
+to a job-specific runtime root, and emits a tab-separated launch plan. Execute
+generation from those paths; never execute a run-local relocation script from
+Lustre.
+
+Before copying a completed dataset group back to durable storage, run
+`generate_od_defects.py validate-group`. It reconciles requested, generated,
+and blocked counts, checks the pseudo-label categories and image files, and
+writes the per-group completion report used by the final merge.
+
 The required `defect_spec` is validated during preparation. In particular,
 every `spatial_dependency: text` entry must carry a non-empty
 `roi_prompt_defect_location`. Generation consumes the resulting frozen

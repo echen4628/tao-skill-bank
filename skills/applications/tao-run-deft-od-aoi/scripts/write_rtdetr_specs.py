@@ -35,6 +35,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--results-root", required=True)
     parser.add_argument("--incumbent-config", default=None)
     parser.add_argument("--history", default=None)
+    parser.add_argument(
+        "--training-workers",
+        type=int,
+        default=None,
+        help="Explicit runtime override; 0 disables DataLoader subprocesses.",
+    )
+    parser.add_argument(
+        "--inference-workers",
+        type=int,
+        default=None,
+        help="Explicit inference runtime override; 0 disables DataLoader subprocesses.",
+    )
     return parser.parse_args()
 
 
@@ -192,6 +204,17 @@ def inference_spec(
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
     policy = load_policy(args.policy)
+    policy = copy.deepcopy(policy)
+    training_workers = getattr(args, "training_workers", None)
+    inference_workers = getattr(args, "inference_workers", None)
+    if training_workers is not None:
+        if training_workers < 0:
+            raise ValueError("training_workers cannot be negative")
+        policy["training"]["workers"] = int(training_workers)
+    if inference_workers is not None:
+        if inference_workers < 0:
+            raise ValueError("inference_workers cannot be negative")
+        policy["inference"]["workers"] = int(inference_workers)
     if not 1 <= args.iteration <= int(policy["max_iterations"]):
         raise ValueError("iteration is outside the frozen policy range")
     train_coco = absolute_file(args.train_coco)
@@ -243,6 +266,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "iteration": args.iteration,
         "train_size": train_size,
         "probes": [],
+        "runtime_overrides": {
+            "training_workers": policy["training"]["workers"],
+            "inference_workers": policy["inference"]["workers"],
+        },
     }
     if run_probes:
         incumbent = read_json(args.incumbent_config) if args.incumbent_config else {}

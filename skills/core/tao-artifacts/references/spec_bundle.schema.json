@@ -12,7 +12,7 @@
     "image": {
       "type": "string",
       "pattern": "^\\S+/\\S+$",
-      "description": "Resolved container URI (registry/path:tag), carried as data. Never a versions.yaml key — resolve first via scripts/resolve_tao_image.py."
+      "description": "Resolved execution image carried as data: a container URI for containerized actions, or the absolute interpreter/runtime path for an explicitly external execution environment. Never an unresolved versions.yaml key."
     },
     "mode": { "enum": ["config", "args"] },
     "command": { "type": "string", "minLength": 1 },

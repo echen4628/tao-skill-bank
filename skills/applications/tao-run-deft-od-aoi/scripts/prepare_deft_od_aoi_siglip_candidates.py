@@ -45,6 +45,12 @@ def _read_coco(path: Path) -> dict[str, Any]:
 
 
 def _source_path(image: dict[str, Any], images_dir: Path) -> Path:
+    # Prefer a staged runtime view when the caller supplied one. Keep the
+    # durable source_path in COCO for identity/provenance, but never force a
+    # SLURM allocation to read the hot image from shared storage.
+    staged = images_dir / Path(str(image.get("file_name") or "")).name
+    if staged.is_file():
+        return staged.absolute()
     raw = str(image.get("source_path") or image.get("file_name") or "").strip()
     if not raw:
         raise ValueError("COCO image needs source_path or file_name")
@@ -55,6 +61,14 @@ def _source_path(image: dict[str, Any], images_dir: Path) -> Path:
     if not path.is_file():
         raise FileNotFoundError(f"COCO image is missing: {path}")
     return path
+
+
+def _identity_path(image: dict[str, Any], images_dir: Path) -> Path:
+    raw = str(image.get("source_path") or image.get("file_name") or "").strip()
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = images_dir / path
+    return path.absolute()
 
 
 def _metadata(image: dict[str, Any], *, defect: bool) -> dict[str, str]:
@@ -192,7 +206,7 @@ def prepare(args: argparse.Namespace) -> tuple[pd.DataFrame, dict[str, Any]]:
                     role="defect",
                     candidate_id=candidate_id,
                     crop_path=crop_path,
-                    parent=parent,
+                    parent=_identity_path(image_row, source_dir),
                     image=image_row,
                     metadata=metadata,
                 )
@@ -225,7 +239,7 @@ def prepare(args: argparse.Namespace) -> tuple[pd.DataFrame, dict[str, Any]]:
                     role="clean",
                     candidate_id=candidate_id,
                     crop_path=crop_path,
-                    parent=parent,
+                    parent=_identity_path(image_row, clean_dir),
                     image=image_row,
                     metadata=metadata,
                 )

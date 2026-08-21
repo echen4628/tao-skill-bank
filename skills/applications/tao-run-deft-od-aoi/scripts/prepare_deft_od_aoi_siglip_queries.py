@@ -18,6 +18,7 @@ from PIL import Image, ImageOps
 
 from prepare_deft_od_aoi_siglip_candidates import (
     _context_crop,
+    _identity_path,
     _metadata,
     _save_crop,
     _source_path,
@@ -52,7 +53,15 @@ def _image_lookup(coco: dict[str, Any]) -> dict[str, dict[str, Any]]:
     output: dict[str, dict[str, Any]] = {}
     for image in coco.get("images", []):
         file_name = str(image.get("file_name") or "")
-        for key in (file_name, Path(file_name).name, Path(file_name).stem):
+        source_path = str(image.get("source_path") or "")
+        for key in (
+            file_name,
+            Path(file_name).name,
+            Path(file_name).stem,
+            source_path,
+            Path(source_path).name,
+            Path(source_path).stem,
+        ):
             if key:
                 output[key] = image
     return output
@@ -126,7 +135,7 @@ def prepare(args: argparse.Namespace) -> tuple[pd.DataFrame, dict[str, Any]]:
                 "branch": branch,
                 "gap_pass": gap_pass,
                 "gap_row": gap_row,
-                "parent_filepath": str(parent),
+                "parent_filepath": str(_identity_path(image_row, images_dir)),
                 "source_image_id": image_row.get("id"),
                 "benchmark": metadata["benchmark"],
                 "texture": metadata["texture"],

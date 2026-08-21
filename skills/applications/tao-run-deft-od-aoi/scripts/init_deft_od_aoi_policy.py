@@ -30,6 +30,24 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Iteration-3+ LR bake-off. Default true; false skips probes.",
     )
+    parser.add_argument(
+        "--model-soup-enabled",
+        choices=("true", "false"),
+        default=None,
+        help="Final greedy KPI model soup. Default true; false skips it.",
+    )
+    parser.add_argument(
+        "--training-workers",
+        type=int,
+        default=3,
+        help="RT-DETR training DataLoader workers. Use 0 on clusters with unstable shared-memory IPC.",
+    )
+    parser.add_argument(
+        "--inference-workers",
+        type=int,
+        default=8,
+        help="RT-DETR inference DataLoader workers.",
+    )
     parser.add_argument("--output", required=True)
     return parser.parse_args()
 
@@ -49,6 +67,13 @@ def main() -> int:
                 if args.probes_enabled is None
                 else args.probes_enabled == "true"
             ),
+            model_soup_enabled=(
+                None
+                if args.model_soup_enabled is None
+                else args.model_soup_enabled == "true"
+            ),
+            training_workers=args.training_workers,
+            inference_workers=args.inference_workers,
         )
         output = Path(args.output).expanduser().resolve()
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -66,7 +91,8 @@ def main() -> int:
         print(
             f"DEFT OD AOI policy frozen: iterations={policy['max_iterations']} "
             f"retrieval={policy['retrieval']['mode']} "
-            f"probes={policy['training']['probes_enabled']} -> {output}"
+            f"probes={policy['training']['probes_enabled']} "
+            f"model_soup={policy['model_soup']['enabled']} -> {output}"
         )
         print("SigLIP role-separated retrieval is enabled; uniform mining is disabled.")
         return 0

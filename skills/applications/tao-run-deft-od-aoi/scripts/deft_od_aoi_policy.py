@@ -17,17 +17,25 @@ def build_policy(
     max_iterations: int,
     synthetic_enabled: bool | None = None,
     probes_enabled: bool | None = None,
+    model_soup_enabled: bool | None = None,
+    training_workers: int = 3,
+    inference_workers: int = 8,
 ) -> dict[str, Any]:
     if max_iterations < 1:
         raise ValueError("max_iterations must be positive")
+    if training_workers < 0 or inference_workers < 0:
+        raise ValueError("training and inference workers cannot be negative")
     if synthetic_enabled is None:
         raise ValueError("synthetic_enabled must be explicit")
     synthetic_is_enabled = bool(synthetic_enabled)
 
     probes_are_enabled = True if probes_enabled is None else bool(probes_enabled)
+    soup_is_enabled = (
+        True if model_soup_enabled is None else bool(model_soup_enabled)
+    )
 
     policy: dict[str, Any] = {
-        "schema_version": 3,
+        "schema_version": 4,
         "max_iterations": int(max_iterations),
         "task": {"class_name": "defect", "binary": True},
         "data": {
@@ -45,7 +53,7 @@ def build_policy(
             "confidence_threshold": 0.001,
             "num_gpus": 1,
             "batch_size": 32,
-            "workers": 8,
+            "workers": int(inference_workers),
         },
         "gap": {
             "loose_confidence": 0.3,
@@ -112,7 +120,7 @@ def build_policy(
             "backbone_learning_rate": 1.0e-5,
             "validation_interval": 1,
             "checkpoint_interval": 1,
-            "workers": 3,
+            "workers": int(training_workers),
             "fixed_epoch_iterations": [1, 2],
             "fixed_epochs": 36,
             "probes_enabled": probes_are_enabled,
@@ -142,19 +150,50 @@ def build_policy(
             "checkpoint_selection_metric": "kpi_validation_ap50",
             "test_is_report_only": True,
         },
+        "model_soup": {
+            "enabled": soup_is_enabled,
+            "method": "greedy",
+            "candidate_scope": "all_iteration_kpi_selected_checkpoints",
+            "metric": "kpi_validation_ap50",
+            "direction": "maximize",
+            "min_improvement": 0.0,
+            "test_is_report_only": True,
+        },
     }
     validate_policy(policy)
     return policy
 
 
 def validate_policy(policy: dict[str, Any]) -> None:
-    if policy.get("schema_version") != 3:
+    schema_version = policy.get("schema_version")
+    if schema_version not in (3, 4):
         raise ValueError("unsupported DEFT OD AOI policy schema_version")
     if int(policy.get("max_iterations", 0)) < 1:
         raise ValueError("max_iterations must be positive")
     training = policy.get("training") or {}
     if not isinstance(training.get("probes_enabled"), bool):
         raise ValueError("training.probes_enabled must be boolean")
+    model_soup = policy.get("model_soup")
+    # Schema 3 policies remain valid for resume and predate the final soup stage.
+    if schema_version == 4 or model_soup is not None:
+        model_soup = model_soup or {}
+        if not isinstance(model_soup.get("enabled"), bool):
+            raise ValueError("model_soup.enabled must be boolean")
+        if model_soup.get("method") != "greedy":
+            raise ValueError("model_soup.method must be greedy")
+        if (
+            model_soup.get("candidate_scope")
+            != "all_iteration_kpi_selected_checkpoints"
+        ):
+            raise ValueError("unsupported model_soup candidate scope")
+        if model_soup.get("metric") != "kpi_validation_ap50":
+            raise ValueError("model_soup metric must be kpi_validation_ap50")
+        if model_soup.get("direction") != "maximize":
+            raise ValueError("model_soup direction must be maximize")
+        if float(model_soup.get("min_improvement", -1)) < 0:
+            raise ValueError("model_soup min_improvement cannot be negative")
+        if model_soup.get("test_is_report_only") is not True:
+            raise ValueError("model_soup test set must be report-only")
 
     gap = policy.get("gap") or {}
     loose = float(gap.get("loose_confidence", -1))
@@ -169,6 +208,8 @@ def validate_policy(policy: dict[str, Any]) -> None:
             "require 0 <= background_iou_upper < near_miss_iou_upper == match_iou <= 1"
         )
     inference = policy.get("inference") or {}
+    if int(inference.get("workers", -1)) < 0:
+        raise ValueError("inference.workers cannot be negative")
     inference_confidence = float(inference.get("confidence_threshold", -1))
     if not 0 <= inference_confidence < loose:
         raise ValueError("inference confidence must be below the loose gap confidence")
@@ -193,6 +234,9 @@ def validate_policy(policy: dict[str, Any]) -> None:
         raise ValueError("synthetic per-iteration cap cannot be negative")
     if int(synthetic.get("shortfall_fill_minimum", -1)) < 0:
         raise ValueError("synthetic shortfall-fill minimum cannot be negative")
+
+    if int(training.get("workers", -1)) < 0:
+        raise ValueError("training.workers cannot be negative")
 
     uniform = routing.get("uniform_mine") or {}
     mode = uniform.get("mode")

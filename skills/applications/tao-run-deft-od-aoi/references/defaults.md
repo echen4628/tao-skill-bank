@@ -153,3 +153,5 @@ algorithm. Learning rates, GPU shape, and probe jitter ranges stay in
 - Base LR / backbone LR — `1e-4` / `1e-5`
 - Checkpoint selection — KPI validation AP50
 - Test — report-only
+- Final model soup — enabled, greedy, all compatible iteration-selected
+  checkpoints, KPI AP50 maximize, strict improvement (`min_improvement: 0.0`)

@@ -38,9 +38,13 @@ used unless `force_reconvert_latest` is enabled.
 - Logs are read over SSH from:
 
 ```text
-<job_dir>/slurm-logs/<slurm_job_name>-<slurm_job_id>/main.out
-<job_dir>/slurm-logs/<slurm_job_name>-<slurm_job_id>/main.err
+<job_dir>/slurm-logs/<slurm_job_name>-<slurm_job_id>.out
+<job_dir>/slurm-logs/<slurm_job_name>-<slurm_job_id>.err
 ```
+
+Create the static `slurm-logs` directory before `sbatch`. Do not rely on SLURM
+to create a dynamic `%x-%j` subdirectory; it does not create missing parents
+for `--output` or `--error`.
 
 Status mapping:
 

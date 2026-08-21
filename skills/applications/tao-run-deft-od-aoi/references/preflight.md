@@ -17,6 +17,8 @@ Complete this gate before creating a job-record or submitting work.
   AnomalyGenNext checkpoint required below.
 - Confirm one KPI set used for selection and a separate test set used only for
   reporting.
+- Surface the default final greedy model-soup stage. Freeze whether it is
+  enabled before launch; never decide after seeing test results.
 
 ## NGC CLI gate for automatic checkpoint resolution
 
@@ -134,6 +136,9 @@ Present one review containing:
   bootstrap, probe enablement, dual gap
   thresholds, IoU thresholds, synthesis enablement, admission caps, and
   training policy;
+- final model-soup enablement, greedy method, candidate scope (all compatible
+  iteration-selected checkpoints), KPI AP50 direction, and strict improvement
+  gate;
 - when synthesis is enabled: proof the mining-pool defects have pixel masks,
   the mask-pool path, the frozen generator-type list, `defect_spec` path,
   per-route AnomalyGenNext checkpoint/recipe pairs, Cosmos3-Nano base

@@ -75,6 +75,13 @@ Read `references/input-contract.md` before adapting a dataset layout.
 
 ## Quick Start
 
+Use the one `scripts/prepare_anomalygennext_inputs.py` entry point throughout.
+For DEFT OD AOI, begin with `materialize-aoi-plan`; it converts the frozen
+synthetic plan and strict FN gaps into the filtering config and pair-preserving
+subset. The same program also provides `stage-embedding`, `restore-embedding`,
+`stage-amp`, and `restore-amp` so SLURM jobs never need run-local remapping
+utilities. GPU embedding, AMP, and generation are separate job-records.
+
 Use the project control-plane Python for deterministic host preparation:
 
 ```bash
@@ -89,6 +96,12 @@ bash "$PREP_SKILL/scripts/prepare_anomalygennext_sources.sh" \
 
 `RUN_ROOT` must not exist. Preparation refuses to reuse or overwrite an output
 directory; start a new directory for every input contract.
+
+`prepare-inputs` freezes a copy of `filtering_config.yaml` inside
+`prepared_anomalygennext_inputs/` and records that copied path in the input
+contract. Downstream KNN, AMP, and generation jobs consume this copy so the
+prepared root remains self-contained if the host materialization directory is
+moved or retired.
 
 The command writes:
 

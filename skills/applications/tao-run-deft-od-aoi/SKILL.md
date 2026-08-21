@@ -7,10 +7,14 @@ description: >
   role-separated SigLIP retrieval for FN/FP-driven mining,
   optional AnomalyGenNext synthesis, admission control, cumulative COCO
   assembly, adaptive training, and KPI-only checkpoint selection. Use for
-  "run DEFT OD AOI", "dual-threshold DEFT OD", or a
-  binary RT-DETR loop that explicitly routes false positives and false
-  negatives. Do not use for the canonical Grounding-DINO whole-image DEFT
-  workflow, generic object detection, or one-off training.
+  "train an object detection model to detect defects via DEFT", "run DEFT OD
+  AOI", "industrial/AOI defect detection with DEFT", or any binary RT-DETR loop that treats every localized anomaly as the
+  single `defect` class and explicitly routes false positives and false
+  negatives. For an ambiguous DEFT defect-detection request, surface this AOI
+  variant and ask whether the task is binary inspection; select it when the
+  answer is yes. Use the canonical `tao-run-deft-object-detection` workflow
+  instead for multiclass defects, Grounding DINO, or generic object detection.
+  Do not use this skill for one-off training.
 license: Apache-2.0
 compatibility: Requires the TAO skill bank, Python with pandas, pyarrow, numpy, Pillow, and PyYAML, an RT-DETR TAO image, a selected execution platform, labeled binary COCO pools, and an optional configured AnomalyGenNext producer.
 metadata:
@@ -82,8 +86,9 @@ After the user approves the launch review, freeze the policy:
   --output "${RESULTS_DIR}/deft_od_aoi_policy.json"
 ```
 
-Pass `--probes-enabled false` to skip the iteration-3+ LR bake-off. Omit the
-flag to keep probes on.
+Pass `--probes-enabled false` to skip the iteration-3+ LR bake-off. Pass
+`--model-soup-enabled false` to skip final greedy consolidation. Omit either
+flag to keep its stage on.
 
 ## Workflow
 
@@ -99,9 +104,13 @@ only adds DEFT OD AOI overlays and bundled glue.
 2. Establish iteration 0 by running base-checkpoint inference on KPI and
    test, then loose and strict KPI gaps.
 3. For training iteration N, crop and embed strict FNs and loose FPs from
-   iteration N-1, then route them with
-   `scripts/route_deft_od_aoi_siglip.py`. Candidate eligibility is global
-   within the requested role; dataset and texture labels do not gate search.
+   iteration N-1 with `scripts/route_deft_od_aoi_iteration.py prepare`, run the
+   tracked embedding leaf job, finalize its durable paths with
+   `finalize-embeddings`, then route and gate admission with `commit`. Use
+   `stage-coco` only as the node-local handoff on platforms that require it.
+   Do not invoke the lower-level `route_deft_od_aoi_siglip.py` directly.
+   Candidate eligibility is global within the requested role; dataset and
+   texture labels do not gate search.
 4. Generate and validate the requested synthetic dose when enabled.
 5. Assemble one cumulative binary COCO containing admitted real positives,
    clean negatives, and admitted synthetic positives.
@@ -110,6 +119,10 @@ only adds DEFT OD AOI overlays and bundled glue.
 7. Infer the selected checkpoint on KPI and test, report both, create loose and
    strict KPI gaps for iteration N, then repeat. Do not stop early on a metric
    target.
+8. After the final iteration, invoke `tao-model-soup` on every compatible
+   iteration-selected checkpoint when the frozen model-soup policy is enabled.
+   Greedy selection uses KPI only. Freeze that result, then evaluate it once on
+   test; test never chooses ingredients or whether to keep the soup.
 
 ## Fixed semantic boundaries
 
@@ -134,7 +147,8 @@ only adds DEFT OD AOI overlays and bundled glue.
 - `references/source-manifest.md` — one/many-path intake and exact metadata rules.
 - `references/gap-routing.md` — exact FP/FN matching, routing, dosing, and caps.
 - `references/pipeline.md` — stage commands, output layout, and hard gates.
-- `references/training-policy.md` — probes, epoch budgets, checkpoint choice.
+- `references/training-policy.md` — probes, epoch budgets, checkpoint choice,
+  common runtime issues, and recovery gates.
 - `references/scripts-and-agents.md` — bundled scripts and stage→skill map.
 
 For the original Grounding-DINO, whole-image SigLIP, mining-only workflow,

@@ -9,6 +9,7 @@ import argparse
 import csv
 import hashlib
 import json
+import shutil
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -98,6 +99,113 @@ def emit_plan(args: argparse.Namespace) -> None:
         )
 
 
+def _runtime_copy(source_value: str, directory: Path) -> Path:
+    source = Path(source_value)
+    if not source.is_file():
+        raise FileNotFoundError(source)
+    digest = hashlib.sha256(str(source.resolve()).encode("utf-8")).hexdigest()[:24]
+    target = directory / f"{digest}{source.suffix.lower()}"
+    if not target.is_file():
+        shutil.copy2(source, target)
+    return target
+
+
+def stage_runtime(args: argparse.Namespace) -> None:
+    """Materialize a frozen generation-plan subset below node-local storage."""
+    prepared = Path(args.inputs_dir)
+    _validate_frozen_inputs(prepared)
+    plan = json.loads(
+        (
+            prepared
+            / "prepared_anomalygennext_inputs"
+            / "anomalygen_next_generation_plan.json"
+        ).read_text()
+    )
+    plan = _selected_groups(plan, args.datasets)
+    if not plan:
+        raise ValueError("no generation groups selected")
+    checkpoint = Path(args.local_checkpoint)
+    recipe = Path(args.local_recipe)
+    real_root = Path(args.local_real_root)
+    if not checkpoint.is_file():
+        raise FileNotFoundError(checkpoint)
+    if not recipe.is_file():
+        raise FileNotFoundError(recipe)
+    if not real_root.is_dir():
+        raise FileNotFoundError(real_root)
+
+    runtime = Path(args.runtime_root)
+    runtime.mkdir(parents=True, exist_ok=False)
+    tsv_rows: list[str] = []
+    summary: list[dict[str, Any]] = []
+    for group in plan:
+        dataset_id = str(group["dataset_id"])
+        group_root = runtime / dataset_id
+        images, masks = group_root / "images", group_root / "masks"
+        images.mkdir(parents=True)
+        masks.mkdir()
+        testcase_rows = []
+        for line in Path(group["testcase"]).read_text().splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            row["image_filename"] = str(
+                _runtime_copy(str(row["image_filename"]), images)
+            )
+            row["mask_filename"] = str(
+                _runtime_copy(str(row["mask_filename"]), masks)
+            )
+            testcase_rows.append(row)
+        requested = int(group["requested_rows"])
+        if len(testcase_rows) != requested:
+            raise ValueError(
+                f"runtime testcase count mismatch for {dataset_id}: "
+                f"rows={len(testcase_rows)} requested={requested}"
+            )
+        testcase = group_root / "testcase.jsonl"
+        testcase.write_text(
+            "".join(json.dumps(row, sort_keys=True) + "\n" for row in testcase_rows)
+        )
+        anomaly_types = list(map(str, group.get("anomaly_types", [group["anomaly_type"]])))
+        tsv_rows.append(
+            "\t".join(
+                (
+                    dataset_id,
+                    ",".join(anomaly_types),
+                    str(testcase),
+                    str(checkpoint),
+                    str(recipe),
+                    str(real_root),
+                    str(requested),
+                )
+            )
+        )
+        summary.append(
+            {
+                "dataset_id": dataset_id,
+                "requested_rows": requested,
+                "unique_images": len(list(images.iterdir())),
+                "unique_masks": len(list(masks.iterdir())),
+                "anomaly_types": anomaly_types,
+            }
+        )
+    output = Path(args.output_tsv)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text("\n".join(tsv_rows) + "\n")
+    _write_json(
+        runtime / "runtime_summary.json",
+        {
+            "status": "COMPLETE",
+            "groups": summary,
+            "requested_rows": sum(row["requested_rows"] for row in summary),
+        },
+    )
+    print(
+        f"stage runtime PASS: groups={len(summary)} "
+        f"requested={sum(row['requested_rows'] for row in summary)}"
+    )
+
+
 def _csv_count(path: Path) -> int:
     with path.open(newline="") as handle:
         return sum(1 for _ in csv.DictReader(handle))
@@ -105,6 +213,49 @@ def _csv_count(path: Path) -> int:
 
 def _blocked_count(path: Path) -> int:
     return _csv_count(path) if path.is_file() else 0
+
+
+def validate_group(args: argparse.Namespace) -> None:
+    root = Path(args.group_root)
+    raw, searched = root / "raw", root / "searched"
+    generated = _csv_count(raw / "texture_ft_generation_result.csv")
+    blocked = _blocked_count(raw / "guardrail_blocked.csv")
+    if generated + blocked != args.requested:
+        raise ValueError(
+            f"generation accounting mismatch: generated={generated} "
+            f"blocked={blocked} requested={args.requested}"
+        )
+    coco = json.loads(
+        (searched / "pseudo_labels" / "coco_annotations.json").read_text()
+    )
+    if len(coco.get("images", [])) != generated:
+        raise ValueError(
+            f"COCO/generated mismatch: coco={len(coco.get('images', []))} "
+            f"generated={generated}"
+        )
+    if generated and not coco.get("annotations"):
+        raise ValueError("generated group has no pseudo-label annotations")
+    expected_types = {item for item in args.anomaly_types.split(",") if item}
+    actual_types = {str(row["name"]) for row in coco.get("categories", [])}
+    unexpected = sorted(actual_types - expected_types)
+    if unexpected:
+        raise ValueError(f"unexpected pseudo-label categories: {unexpected}")
+    for image in coco.get("images", []):
+        path = searched / "reconstructed_image" / str(image["file_name"])
+        if not path.is_file():
+            raise FileNotFoundError(path)
+    report = {
+        "status": "COMPLETE",
+        "dataset_id": args.dataset_id,
+        "requested": int(args.requested),
+        "generated": generated,
+        "guardrail_blocked": blocked,
+        "pseudo_labeled_images": len(coco.get("images", [])),
+        "annotations": len(coco.get("annotations", [])),
+        "categories": sorted(actual_types),
+    }
+    _write_json(Path(args.output_json), report)
+    print(json.dumps(report, sort_keys=True))
 
 
 def finalize(args: argparse.Namespace) -> None:
@@ -286,6 +437,24 @@ def parser() -> argparse.ArgumentParser:
     command.add_argument("--inputs-dir", required=True)
     command.add_argument("--datasets", default=None)
     command.set_defaults(func=emit_plan)
+
+    command = commands.add_parser("stage-runtime")
+    command.add_argument("--inputs-dir", required=True)
+    command.add_argument("--runtime-root", required=True)
+    command.add_argument("--local-real-root", required=True)
+    command.add_argument("--local-checkpoint", required=True)
+    command.add_argument("--local-recipe", required=True)
+    command.add_argument("--datasets", default=None)
+    command.add_argument("--output-tsv", required=True)
+    command.set_defaults(func=stage_runtime)
+
+    command = commands.add_parser("validate-group")
+    command.add_argument("--group-root", required=True)
+    command.add_argument("--dataset-id", required=True)
+    command.add_argument("--requested", type=int, required=True)
+    command.add_argument("--anomaly-types", required=True)
+    command.add_argument("--output-json", required=True)
+    command.set_defaults(func=validate_group)
 
     command = commands.add_parser("finalize")
     command.add_argument("--inputs-dir", required=True)

@@ -7,8 +7,9 @@ description: >
   as a separate reusable run, and optionally admit FN-driven AnomalyGenNext synthetic data per
   iteration. Use for "run the DEFT OD loop", "run DEFT with RT-DETR", "smart data augmentation for
   Grounding DINO", "mine and retrain my detection model", "prep the source pool", or "generate OD
-  defects with AnomalyGenNext". Do not use for standalone training, one-off inference, or gap
-  analysis alone.
+  defects with AnomalyGenNext". Do not use for binary AOI defect detection where every localized
+  anomaly is the single `defect` class; use `tao-run-deft-od-aoi` instead. Do not use for standalone
+  training, one-off inference, or gap analysis alone.
 license: Apache-2.0
 compatibility: Requires docker + nvidia-container-toolkit and one or more CUDA GPUs. Workflows declare additional requirements.
 metadata:
@@ -76,7 +77,10 @@ loop launches (see `## Two Invocations: Prep, Then Loop`):
 - "Pseudo-label my unlabeled images for mining"
 - "Build the mining pool from these raw images"
 
-Do not use this skill for a single standalone TAO training run, one-off inference, or gap analysis alone. Invoke the relevant leaf skill directly instead.
+Do not use this skill for binary AOI defect detection where every localized anomaly is the single
+`defect` class; invoke `tao-run-deft-od-aoi` instead. Do not use it for a single standalone TAO
+training run, one-off inference, or gap analysis alone. Invoke the relevant leaf skill directly
+instead.
 
 ## Scope: Grounding DINO/ODVG or RT-DETR/COCO
 

@@ -198,6 +198,14 @@ class PipelineContractTest(unittest.TestCase):
 
     def test_prepared_inputs_freezes_exact_generator_inputs(self) -> None:
         self._run_preparation()
+        frozen_config = (
+            self.run / "prepared_anomalygennext_inputs" / "filtering_config.yaml"
+        )
+        self.assertTrue(frozen_config.is_file())
+        contract = json.loads(
+            (self.run / "prepared_anomalygennext_inputs" / "input_contract.json").read_text()
+        )
+        self.assertEqual(contract["filtering_config"], str(frozen_config))
         manifest = json.loads((self.run / "prepared_anomalygennext_inputs" / "prepared_inputs_manifest.json").read_text())
         self.assertEqual(manifest["source_tag"], "test_fixture")
         self.assertEqual(manifest["selected_fn_count"], 1)
@@ -419,6 +427,163 @@ class PipelineContractTest(unittest.TestCase):
             pipeline.validate_prepared_inputs(
                 type("Args", (), {"prepared_inputs_root": str(self.run)})()
             )
+
+    def test_embedding_stage_and_restore_preserve_durable_paths(self) -> None:
+        source = self.root / "embedding_input.parquet"
+        pd.DataFrame([{"filepath": str(self.fn_image), "token": "keep"}]).to_parquet(source)
+        source_spec = self.root / "embedding.yaml"
+        source_spec.write_text(
+            yaml.safe_dump(
+                {
+                    "input_parquet": str(source),
+                    "output_parquet": str(self.root / "durable.parquet"),
+                    "model": "SigLIP",
+                    "model_path": "remote-model",
+                    "batch_size": 1,
+                }
+            )
+        )
+        stage = self.root / "scratch"
+        pipeline.stage_embedding(
+            type(
+                "Args",
+                (),
+                {
+                    "source_spec": str(source_spec),
+                    "stage_root": str(stage),
+                    "model_path": str(self.root / "local-model"),
+                    "local_output": str(stage / "embeddings.parquet"),
+                    "output_spec": str(stage / "spec.yaml"),
+                    "mapping": str(stage / "mapping.parquet"),
+                },
+            )()
+        )
+        local = pd.read_parquet(stage / "input.parquet")
+        local["embedding"] = [np.asarray([1.0, 0.0])]
+        local.to_parquet(stage / "embeddings.parquet")
+        restored = self.root / "restored.parquet"
+        pipeline.restore_embedding(
+            type(
+                "Args",
+                (),
+                {
+                    "embedding_parquet": str(stage / "embeddings.parquet"),
+                    "mapping": str(stage / "mapping.parquet"),
+                    "durable_output": str(restored),
+                },
+            )()
+        )
+        self.assertEqual(pd.read_parquet(restored).iloc[0]["filepath"], str(self.fn_image))
+
+    def test_materialize_aoi_plan_selects_fn_rows_from_complete_gap_table(self) -> None:
+        image = self.root / "MVTec-AD" / "widget" / "test" / "scratch" / "001.png"
+        write_image(image)
+        coco = self.root / "kpi.json"
+        coco.write_text(
+            json.dumps(
+                {
+                    "images": [
+                        {
+                            "id": 1,
+                            "source_path": str(image),
+                            "deft_od_aoi": {"generator_type": "mvtec_widget+scratch"},
+                        }
+                    ],
+                    "annotations": [],
+                    "categories": [{"id": 1, "name": "defect"}],
+                }
+            )
+        )
+        strict = self.root / "strict.parquet"
+        pd.DataFrame(
+            [
+                {"image_id": 1, "gap_type": "TP", "bbox": [1, 1, 4, 4], "class": "defect"},
+                {"image_id": 1, "gap_type": "FN", "bbox": [8, 8, 15, 15], "class": "defect"},
+                {"image_id": 1, "gap_type": "FP", "bbox": [20, 20, 4, 4], "class": "defect"},
+            ]
+        ).to_parquet(strict, index=False)
+        plan = self.root / "synthetic_plan.json"
+        plan.write_text(json.dumps({"mvtec_widget+scratch": 2}))
+        output = self.root / "materialized"
+        pipeline.materialize_aoi_plan(
+            type(
+                "Args",
+                (),
+                {
+                    "iteration": 2,
+                    "kpi_coco": str(coco),
+                    "strict_gaps": str(strict),
+                    "synthetic_plan": str(plan),
+                    "output_root": str(output),
+                    "pool_root": str(self.root / "pool"),
+                    "defect_spec": str(self.root / "defect_spec.jsonl"),
+                    "checkpoint": str(self.root / "iter_000001000.pt"),
+                    "recipe": str(self.root / "recipe.yaml"),
+                    "embedding_model_path": str(self.root / "model"),
+                    "embedding_batch_size": 256,
+                    "candidate_topn": 3,
+                    "min_similarity": -1.0,
+                    "mask_sample_seed": 43,
+                },
+            )()
+        )
+        report = json.loads((output / "selection_report.json").read_text())
+        subset = pd.read_parquet(output / "strict_fn_synthesis_subset.parquet")
+        self.assertEqual(report["input_gap_rows"], 3)
+        self.assertEqual(report["input_fn_rows"], 1)
+        self.assertEqual(len(subset), 1)
+        self.assertTrue(subset["gap_type"].astype(str).str.upper().eq("FN").all())
+
+    def test_restore_amp_rewrites_runtime_paths_without_hidden_state(self) -> None:
+        local_clean = self.root / "scratch" / "clean.png"
+        durable_clean = self.root / "durable" / "clean.png"
+        local_amp = self.root / "scratch" / "amp"
+        durable_amp = self.root / "durable" / "amp"
+        local_mask = local_amp / "toy" / "mask.png"
+        durable_mask = durable_amp / "toy" / "mask.png"
+        write_image(local_clean)
+        write_image(durable_clean)
+        write_mask(local_mask)
+        write_mask(durable_mask)
+        source = self.root / "runtime_testcase.jsonl"
+        source.write_text(
+            json.dumps(
+                {
+                    "image_filename": str(local_clean.resolve()),
+                    "mask_filename": str(local_mask.resolve()),
+                    "anomaly_type": "toy_widget+scratch",
+                }
+            )
+            + "\n"
+        )
+        mapping = self.root / "amp_mapping.json"
+        mapping.write_text(
+            json.dumps(
+                {
+                    "clean": {
+                        str(local_clean.resolve()): str(durable_clean.resolve())
+                    },
+                    "rows": 1,
+                }
+            )
+        )
+        output = self.root / "durable_testcase.jsonl"
+        pipeline.restore_amp(
+            type(
+                "Args",
+                (),
+                {
+                    "mapping_json": str(mapping),
+                    "local_amp_root": str(local_amp),
+                    "durable_amp_root": str(durable_amp),
+                    "source_testcase": str(source),
+                    "durable_testcase": str(output),
+                },
+            )()
+        )
+        row = json.loads(output.read_text())
+        self.assertEqual(row["image_filename"], str(durable_clean.resolve()))
+        self.assertEqual(row["mask_filename"], str(durable_mask.resolve()))
 
 if __name__ == "__main__":
     unittest.main()

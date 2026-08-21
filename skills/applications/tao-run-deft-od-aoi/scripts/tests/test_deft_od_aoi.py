@@ -26,13 +26,19 @@ import prepare_deft_od_aoi_siglip_candidates  # noqa: E402
 import prepare_deft_od_aoi_siglip_queries  # noqa: E402
 import prepare_deft_od_aoi_sources  # noqa: E402
 import route_deft_od_aoi  # noqa: E402
+import route_deft_od_aoi_iteration  # noqa: E402
 import route_deft_od_aoi_siglip  # noqa: E402
 import select_deft_od_aoi_checkpoint  # noqa: E402
 import select_deft_od_aoi_probe  # noqa: E402
 import validate_deft_od_aoi_inputs  # noqa: E402
 import write_gap_specs  # noqa: E402
 import write_rtdetr_specs  # noqa: E402
-from deft_od_aoi_policy import build_policy, probes_active, uniform_mine_for_iteration  # noqa: E402
+from deft_od_aoi_policy import (  # noqa: E402
+    build_policy,
+    probes_active,
+    uniform_mine_for_iteration,
+    validate_policy,
+)
 
 
 def write_json(path: Path, value: object) -> None:
@@ -79,11 +85,23 @@ class PolicyTest(unittest.TestCase):
             max_iterations=3,
             synthetic_enabled=False,
         )
-        self.assertEqual(policy["schema_version"], 3)
+        self.assertEqual(policy["schema_version"], 4)
         self.assertEqual(policy["retrieval"]["mode"], "siglip_only")
         self.assertEqual(uniform_mine_for_iteration(policy, 2), 0)
         self.assertTrue(policy["training"]["probes_enabled"])
+        self.assertTrue(policy["model_soup"]["enabled"])
+        self.assertEqual(policy["model_soup"]["method"], "greedy")
         self.assertTrue(probes_active(policy, 3))
+        ipc_safe = build_policy(
+            max_iterations=3,
+            synthetic_enabled=False,
+            training_workers=0,
+            inference_workers=0,
+        )
+        self.assertEqual(ipc_safe["training"]["workers"], 0)
+        self.assertEqual(ipc_safe["inference"]["workers"], 0)
+        with self.assertRaisesRegex(ValueError, "workers"):
+            build_policy(max_iterations=1, synthetic_enabled=False, training_workers=-1)
         disabled = build_policy(
             max_iterations=3,
             synthetic_enabled=False,
@@ -91,6 +109,16 @@ class PolicyTest(unittest.TestCase):
         )
         self.assertFalse(disabled["training"]["probes_enabled"])
         self.assertFalse(probes_active(disabled, 3))
+        soup_disabled = build_policy(
+            max_iterations=3,
+            synthetic_enabled=False,
+            model_soup_enabled=False,
+        )
+        self.assertFalse(soup_disabled["model_soup"]["enabled"])
+        legacy = dict(policy)
+        legacy["schema_version"] = 3
+        legacy.pop("model_soup")
+        validate_policy(legacy)
 
     def test_dual_gap_specs(self) -> None:
         policy = build_policy(
@@ -111,6 +139,49 @@ class PolicyTest(unittest.TestCase):
         self.assertEqual(loose["iou_threshold"], 0.5)
         self.assertEqual(loose["weak_thresholds"]["defect"]["recall"], 1.0)
         self.assertEqual(loose["default_precision_threshold"], 0.0)
+
+    def test_gap_writer_projects_binary_coco_to_kitti(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "kpi.json"
+            write_json(
+                source,
+                coco(
+                    [
+                        {"id": 1, "file_name": "defect.png", "width": 64, "height": 64},
+                        {"id": 2, "file_name": "clean.png", "width": 64, "height": 64},
+                    ],
+                    [{"id": 1, "image_id": 1, "category_id": 1, "bbox": [2, 3, 10, 12]}],
+                ),
+            )
+            report = write_gap_specs.project_coco_to_kitti(
+                str(source), str(root / "labels"), "defect"
+            )
+            self.assertEqual(report["images"], 2)
+            self.assertIn("2.000000 3.000000 12.000000 15.000000", (root / "labels" / "defect.txt").read_text())
+            self.assertEqual((root / "labels" / "clean.txt").read_text(), "")
+
+    def test_binary_gap_analysis_writes_loose_and_strict_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary); predictions = root / "predictions"; predictions.mkdir()
+            source = root / "kpi.json"
+            write_json(source, coco([{"id": 1, "file_name": "one.png", "source_path": "/durable/one.png", "width": 64, "height": 64}], [{"id": 1, "image_id": 1, "category_id": 1, "bbox": [10, 10, 10, 10]}]))
+            (predictions / "one.txt").write_text(
+                "defect 0 0 0 10 10 20 20 0 0 0 0 0 0 0 0.7\n"
+                "defect 0 0 0 40 40 50 50 0 0 0 0 0 0 0 0.4\n"
+            )
+            policy = build_policy(max_iterations=1, synthetic_enabled=False)
+            args = argparse.Namespace(
+                ground_truth_coco=str(source), inference_ann_path=str(predictions),
+                output_dir=str(root / "gaps"), kpi="iter1"
+            )
+            for kind in ("loose", "strict"):
+                (root / "gaps" / kind).mkdir(parents=True)
+            report = write_gap_specs.analyze_binary(args, policy)
+            self.assertEqual(report["loose"]["gap_counts"], {"FP": 1})
+            self.assertEqual(report["strict"]["gap_counts"], {"FN": 1})
+            strict = pd.read_parquet(root / "gaps" / "strict" / "box_gaps.parquet")
+            self.assertEqual(strict.iloc[0]["filepath"], "/durable/one.png")
 
 
 class GenericPoolNormalizationTest(unittest.TestCase):
@@ -242,6 +313,15 @@ class GenericPoolNormalizationTest(unittest.TestCase):
                 )
             )
             self.assertEqual(validation["status"], "valid")
+
+            stage_report = route_deft_od_aoi_iteration._stage_coco(
+                argparse.Namespace(
+                    coco=str(normalized / "source.json"),
+                    output_images=str(root / "staged_source"),
+                    report=str(root / "stage_report.json"),
+                )
+            )
+            self.assertEqual(stage_report["images"], 1)
 
 
 class SourceManifestPreparationTest(unittest.TestCase):
@@ -594,19 +674,50 @@ class SiglipOnlyRoutingTest(unittest.TestCase):
             query_frame.to_parquet(query_embeddings, index=False)
             policy_path = root / "policy.json"
             write_json(policy_path, build_policy(max_iterations=3, synthetic_enabled=False))
-            route_dir = root / "route"
-            report = route_deft_od_aoi_siglip.route(
+            routing_root = root / "iteration_routing"
+            state = route_deft_od_aoi_iteration._prepare(
                 argparse.Namespace(
                     policy=str(policy_path),
                     iteration=1,
+                    output_root=str(routing_root),
+                    strict_gaps=str(strict_path),
+                    loose_gaps=str(loose_path),
+                    kpi_coco=str(kpi_coco),
+                    kpi_images_dir=str(kpi_images),
+                    embedding_batch_size=8,
+                    runtime_model_path=None,
+                )
+            )
+            self.assertEqual(state["status"], "PREPARED")
+            wrapper_queries = pd.read_parquet(state["query_inputs"])
+            wrapper_queries["embedding"] = wrapper_queries["role"].map(
+                {"defect": [1.0, 0.0], "clean": [0.0, 1.0]}
+            )
+            wrapper_queries.to_parquet(state["query_embeddings"], index=False)
+            finalized_embeddings = routing_root / "queries" / "query_embeddings_final.parquet"
+            finalize_report = route_deft_od_aoi_iteration._finalize_embeddings(
+                argparse.Namespace(
+                    embedding_parquet=state["query_embeddings"],
+                    durable_output=str(finalized_embeddings),
+                    published_output=None,
+                    report=str(routing_root / "queries" / "embedding_finalize_report.json"),
+                    routing_state=str(routing_root / "routing_state.json"),
+                )
+            )
+            self.assertEqual(finalize_report["rows"], 2)
+            self.assertNotIn("filepath", pd.read_parquet(finalized_embeddings).columns)
+            report = route_deft_od_aoi_iteration._commit(
+                argparse.Namespace(
+                    policy=str(policy_path),
+                    iteration=1,
+                    output_root=str(routing_root),
                     candidate_embeddings=str(candidate_embeddings),
-                    query_embeddings=str(query_embeddings),
+                    query_embeddings=str(finalized_embeddings),
                     kpi_coco=str(kpi_coco),
                     source_coco=str(source_coco),
                     source_images_dir=str(source_images),
                     clean_coco=str(clean_coco),
                     clean_images_dir=str(clean_images),
-                    output_dir=str(route_dir),
                     previous_defect_ledger=None,
                     previous_clean_ledger=None,
                     previous_admission_index=None,
@@ -619,7 +730,9 @@ class SiglipOnlyRoutingTest(unittest.TestCase):
             self.assertEqual(report["uniform_mine_per_pocket"], 0)
             self.assertEqual(report["selected_by_benchmark"]["poolx_neu"], 1)
             self.assertEqual(report["selected_by_benchmark"]["poolx_solder"], 1)
-            self.assertTrue((route_dir / "retrieval_audit.parquet").is_file())
+            self.assertTrue((routing_root / "routing" / "retrieval_audit.parquet").is_file())
+            committed = json.loads((routing_root / "routing_state.json").read_text())
+            self.assertEqual(committed["status"], "COMPLETE")
 
 
 class EndToEndDataTest(unittest.TestCase):
@@ -832,8 +945,13 @@ class EndToEndDataTest(unittest.TestCase):
                 results_root=str(train_results),
                 incumbent_config=None,
                 history=None,
+                training_workers=0,
+                inference_workers=0,
             )
         )
+        self.assertEqual(manifest["runtime_overrides"], {"training_workers": 0, "inference_workers": 0})
+        main_spec = yaml.safe_load((specs_dir / "train.yaml").read_text(encoding="utf-8"))
+        self.assertEqual(main_spec["dataset"]["workers"], 0)
         self.assertEqual(len(manifest["probes"]), 3)
         for split in ("kpi", "test"):
             inference_spec = yaml.safe_load(
@@ -919,6 +1037,8 @@ class EndToEndDataTest(unittest.TestCase):
                 results_root=str(self.root / "train_results_no_probes"),
                 incumbent_config=None,
                 history=None,
+                training_workers=None,
+                inference_workers=None,
             )
         )
         self.assertEqual(skipped["probes"], [])
