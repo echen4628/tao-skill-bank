@@ -52,6 +52,19 @@ The jitter probe uses seed `4000 + iteration` and the frozen factor ranges in
 Select the probe configuration by KPI validation AP50, then apply those
 optimizer deltas to the main spec.
 
+Seed `write_rtdetr_specs.py --history` with every prior iteration's assembled
+`train_size`; an empty history makes growth equal 1.0 and silently defeats the
+scaled candidate. Give each probe its own job-record and immutable results
+directory (`probes/p0`, `probes/p1`, `probes/p2`). Do not reuse `main/`, resume
+a probe, or share checkpoints between probes.
+
+Wait for all three probe jobs to complete before running
+`select_deft_od_aoi_probe.py`. That selector atomically writes the winner,
+best-config state, history, and optimizer-patched main spec. Derive the main
+epoch target from the patched nested spec and cross-check it against
+`probe_winner.json`; never submit iteration-3 main training with an inherited
+36-epoch constant.
+
 When probes are disabled (`--probes-enabled false`), skip the bake-off and
 `scripts/select_deft_od_aoi_probe.py`. Train once from the frozen base checkpoint with
 the frozen learning rates. The size-based epoch budget and late-best extension
@@ -67,6 +80,14 @@ Clip it to 24–48 epochs. If the selected best epoch is within the last three
 epochs, resume that same run for 12 additional epochs and reselect on KPI.
 Resume is an extension of the current iteration, not the initialization of the
 next iteration.
+
+Build the extension spec with the packaged
+`scripts/prepare_rtdetr_extension_spec.py`. Pass the selector's
+`planned_epochs`, `extended_num_epochs`, and `resume_checkpoint` as
+`--expected-epochs`, `--extended-epochs`, and `--resume-checkpoint`. The helper
+requires an exact 12-epoch increase and the terminal checkpoint
+`model_epoch_{planned_epochs-1:03d}.pth`; it does not assume the older 36→48
+budget.
 
 ## Training recovery and common runtime issues
 
@@ -141,6 +162,42 @@ least the preceding 30 minutes and all rank logs. Classify it as infrastructure
 only when there is no earlier data, Python, Pillow, socket, CUDA, or filesystem
 exception.
 
+### Probe jobs overwrite or bypass selection
+
+Signatures include probe checkpoints beneath `main/`, an existing-output
+refusal on the second probe, a main run starting before all probe metrics
+exist, or a 36-epoch iteration-3 main spec despite enabled probes.
+
+- Require separate job-records and results directories for `p0`, `p1`, and
+  `p2`; every probe starts from the frozen base and runs exactly ten epochs.
+- Confirm `probe_manifest.json` contains incumbent, scaled, and deterministic
+  jitter candidates and the prior data-growth history.
+- Gate the selector on all three completed probe status files. Gate the main
+  run on `probe_winner.json`, the patched nested `train.yaml`, and matching
+  size-based epoch counts.
+- Treat any pre-selector main launch or probe resume as a program error. Start
+  new immutable outputs rather than attempting to repair mixed artifacts.
+
+### Extension spec assumes the wrong epoch budget
+
+Signatures include a helper requesting `model_epoch_035.pth` for a main run
+whose planned budget was not 36, an extension target fixed at 48, or a resume
+checkpoint that is KPI-best but not the terminal checkpoint. The selector's
+`selected_checkpoint` chooses the final model; its `resume_checkpoint` is the
+terminal checkpoint used to continue optimizer and scheduler state.
+
+- Read `planned_epochs`, `extended_num_epochs`, and `resume_checkpoint` from
+  the selector report rather than rebuilding them from defaults.
+- Require `extended_num_epochs == planned_epochs + 12` and require the resume
+  basename to equal `model_epoch_{planned_epochs-1:03d}.pth`.
+- Generate the nested extension YAML with
+  `prepare_rtdetr_extension_spec.py`; never edit `num_epochs` alone or resume
+  from the KPI-best checkpoint when it is not terminal.
+- Rerun checkpoint selection with `--extension-applied` after the extension.
+  Pass one repeated `--status` argument for the initial run and each
+  resume/extension phase so KPI-best selection covers every trained epoch. A
+  second `action=extend` is a program error.
+
 ### Wall time is shorter than the measured training ETA
 
 This commonly appears after setting `dataset.workers: 0`: the safety override
@@ -160,6 +217,9 @@ different assembled dataset size.
   checkpoint exists. Verify the EXIT trap copied it cleanly, open a
   retry-linked job-record, and resume with the same optimizer, data, target
   epoch, and output identity under an adequate reviewed limit.
+- Preserve each phase's status JSON separately. Run final checkpoint selection
+  with repeated `--status` arguments for all phases; overwriting earlier KPI
+  history with the resumed phase can silently select the wrong checkpoint.
 - Treat a time-limit termination as capacity planning, not a model-program
   error. Preserve the measured epoch timing in the durable timing report.
 
@@ -170,6 +230,48 @@ storage. Keep durable datasets, checkpoints, and results on shared storage only
 where needed. Record allocation, staging complete, workload start/end, and
 copy-back complete timestamps plus setup/teardown seconds. An EXIT trap must
 preserve the workload exit status and copy back only allowlisted results.
+
+### Later iteration regresses after cumulative data disappears
+
+Signatures include a later assembly whose total image count grows while a
+real/clean kind count falls, overlap with the previous COCO consisting only of
+synthetic images, or routing-report cumulative totals larger than the assembly
+report. This is an assembly/orchestration error, not evidence that hard-example
+mining or the selected checkpoint is intrinsically worse.
+
+- Compare `cumulative_real_defectives` and `cumulative_clean_negatives` in the
+  current routing report with `by_kind.real_defect` and
+  `by_kind.clean_negative` in the assembly report. Require exact equality.
+- From iteration 2 onward, require `retained_previous_images` to equal the
+  previous assembled COCO image count and require every previous `source_path`
+  to remain present with unchanged boxes and kind.
+- Invoke `assemble_deft_od_aoi_coco.py` with the immediately previous
+  cumulative COCO, the current route manifest, the current routing report, and
+  only the current synthetic source. Do not carry only prior synthetic roots.
+- Invalidate every train, measurement, gap, and downstream routing result that
+  consumed the incomplete assembly. Reassemble and restart that iteration from
+  the frozen base checkpoint; regenerate later iterations from its corrected
+  selected checkpoint.
+
+### Measurement manifest contains node-local paths
+
+The four selected-checkpoint YAMLs may be valid while
+`measurement_manifest.json` still points at `/raid/scratch/...` because the
+helper wrote into a node-local staging directory. This breaks provenance and
+downstream reuse even though inference can start successfully.
+
+- Run packaged `prepare_rtdetr_measurement_specs.py` with separate
+  `--output-dir <node-local-staging>` and
+  `--published-output-dir <durable-spec-directory>` values.
+- Treat the published directory as an identity: make it absolute, but do not
+  call `Path.resolve()` and silently rewrite a site alias such as
+  `/portfolios/...` to `/projects/...`.
+- Gate all four manifest paths against the exact published directory and reject
+  every `/raid/scratch` string before copy-back.
+- A backend `COMPLETED` state does not override this artifact failure. Mark the
+  prep record `ERR_PROGRAM`, correct only the manifest-preparation step, and
+  retain already-running measurements when their YAML inputs independently
+  passed their own gates.
 
 ## Selection and reporting
 

@@ -137,23 +137,29 @@ valid images, stop the loop.
 
 ## 5. Assemble cumulative COCO
 
-Pass every committed route manifest through the current iteration and every
-admitted synthetic source:
+Use the immediately previous assembled COCO as the cumulative state, then add
+only the current committed route manifest and current admitted synthetic
+source. Omit `--previous-assembled-coco` only for iteration 1:
 
 ```bash
 <skill_root>/scripts/deft_python.sh \
   <skill_root>/scripts/assemble_deft_od_aoi_coco.py \
-  --route-manifest "${ITER1_MANIFEST}" \
   --route-manifest "${CURRENT_MANIFEST}" \
-  --synthetic-source "${SYNTH_COCO}::${SYNTH_IMAGES}" \
+  --current-routing-report "${CURRENT_ROUTING_REPORT}" \
+  --previous-assembled-coco "${PREVIOUS_TRAIN_COCO}" \
+  --synthetic-source "${CURRENT_SYNTH_COCO}::${CURRENT_SYNTH_IMAGES}" \
   --output-coco "${ITER_DIR}/train/annotations.json" \
   --output-images-dir "${ITER_DIR}/train/images"
 ```
 
-Repeat flags for all committed sources; do not literally pass only iteration
-1 and the current iteration when intermediate iterations exist. Gate on the
-assembly report, one `defect` category, and an image count equal to the sum of
-unique admitted sources.
+Do not pass prior synthetic roots separately: they are already present in the
+previous assembled COCO. The script rejects publication unless the assembled
+real and clean counts exactly match `cumulative_real_defectives` and
+`cumulative_clean_negatives` in the current routing report. Gate additionally
+on one `defect` category, `retained_previous_images` equal to the previous
+COCO's image count, and nondecreasing per-kind counts. Rebuilding from every
+committed route/synthetic source remains an equivalent audit path, but the
+single previous-state handoff is the normal interface.
 
 ## 6. Probe, train, and select
 
@@ -180,13 +186,20 @@ label.
 After the main job, run `scripts/select_deft_od_aoi_checkpoint.py`. When it emits
 `action: extend`, set `train.num_epochs` to `extended_num_epochs` and
 `train.resume_training_checkpoint_path` to `resume_checkpoint`, then submit one
-extension of that same iteration. Rerun selection with `--extension-applied`.
+extension of that same iteration. Rerun selection with `--extension-applied`
+and repeat `--status` for the initial phase plus every resume/extension phase;
+selection must cover the complete KPI history, not only the last allocation.
 Never extend twice. Gate on the selected `model_epoch_*.pth` and replace the
-literal `DEFT_OD_AOI_SELECTED_CHECKPOINT` in both inference specs before launch.
+literal `DEFT_OD_AOI_SELECTED_CHECKPOINT` before launch by running packaged
+`scripts/prepare_rtdetr_measurement_specs.py`. On a staged platform, give it a
+node-local `--output-dir` and the durable spec directory as
+`--published-output-dir`; gate the four generated KPI/test inference/evaluation
+YAMLs and the scratch-free `measurement_manifest.json` before measurement.
 
 ## 7. Measure, gap, and advance
 
-Run inference/evaluation on KPI and test using the fixed selected checkpoint.
+Run inference/evaluation on KPI and test using the four frozen specs and fixed
+selected checkpoint.
 Record both metrics, then create loose and strict KPI gaps labeled N. Route the
 next iteration only from those KPI gaps. Continue through `max_iterations`; a
 target metric is report-only unless the user froze a different stopping

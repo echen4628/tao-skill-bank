@@ -20,7 +20,15 @@ from deft_od_aoi_policy import load_policy
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy", required=True)
-    parser.add_argument("--status", required=True)
+    parser.add_argument(
+        "--status",
+        action="append",
+        required=True,
+        help=(
+            "RT-DETR JSON-lines status file. Repeat for every allocation or "
+            "extension phase so selection covers the complete KPI history."
+        ),
+    )
     parser.add_argument("--checkpoint-dir", required=True)
     parser.add_argument("--planned-epochs", type=int, required=True)
     parser.add_argument("--extension-applied", action="store_true")
@@ -50,11 +58,14 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     policy = load_policy(args.policy)
     if args.planned_epochs < 1:
         raise ValueError("planned_epochs must be positive")
-    status = Path(args.status).expanduser().resolve()
     checkpoints = Path(args.checkpoint_dir).expanduser().resolve()
-    if not status.is_file() or not checkpoints.is_dir():
-        raise FileNotFoundError("status or checkpoint directory is missing")
-    rows = metric_rows(status)
+    status_values = args.status if isinstance(args.status, list) else [args.status]
+    statuses = [Path(value).expanduser().resolve() for value in status_values]
+    if not statuses or any(not status.is_file() for status in statuses):
+        raise FileNotFoundError("one or more status files are missing")
+    if not checkpoints.is_dir():
+        raise FileNotFoundError("checkpoint directory is missing")
+    rows = [row for status in statuses for row in metric_rows(status)]
     if not rows:
         raise ValueError("main training status has no KPI mAP50 metrics")
     best_epoch, best_metric = max(rows, key=lambda row: (row[1], -row[0]))
@@ -71,6 +82,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "selected_checkpoint": str(selected),
         "planned_epochs": args.planned_epochs,
         "extension_applied": bool(args.extension_applied),
+        "status_files": [str(status) for status in statuses],
     }
     if needs_extension:
         available = sorted(checkpoints.glob("model_epoch_*.pth"))

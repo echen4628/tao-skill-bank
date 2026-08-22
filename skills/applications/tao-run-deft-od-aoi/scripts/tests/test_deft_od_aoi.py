@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -25,6 +26,8 @@ import normalize_deft_od_aoi_pools  # noqa: E402
 import prepare_deft_od_aoi_siglip_candidates  # noqa: E402
 import prepare_deft_od_aoi_siglip_queries  # noqa: E402
 import prepare_deft_od_aoi_sources  # noqa: E402
+import prepare_rtdetr_extension_spec  # noqa: E402
+import prepare_rtdetr_measurement_specs  # noqa: E402
 import route_deft_od_aoi  # noqa: E402
 import route_deft_od_aoi_iteration  # noqa: E402
 import route_deft_od_aoi_siglip  # noqa: E402
@@ -72,6 +75,210 @@ def image_record(image_id: int, file_name: str, *, defect_type: str = "scratch")
             "generator_type": "metal+scratch",
         },
     }
+
+
+class CumulativeAssemblyTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        self.source = self.root / "source"
+        self.source.mkdir()
+        for seed, name in enumerate(
+            (
+                "real1.png",
+                "synth1.png",
+                "real2.png",
+                "clean2.png",
+                "synth2.png",
+                "real3.png",
+                "clean3.png",
+            ),
+            start=1,
+        ):
+            make_image(self.source / name, seed)
+
+    def tearDown(self) -> None:
+        self.temporary.cleanup()
+
+    def _route(
+        self,
+        iteration: int,
+        records: list[dict],
+        real: int,
+        clean: int,
+    ) -> tuple[Path, Path]:
+        route = self.root / f"route{iteration}.json"
+        report = self.root / f"routing_report{iteration}.json"
+        write_json(route, records)
+        write_json(
+            report,
+            {
+                "cumulative_real_defectives": real,
+                "cumulative_clean_negatives": clean,
+            },
+        )
+        return route, report
+
+    def _synthetic(self, iteration: int, name: str) -> str:
+        path = self.root / f"synthetic{iteration}.json"
+        write_json(
+            path,
+            coco(
+                [
+                    {
+                        "id": 1,
+                        "file_name": name,
+                        "source_path": str(self.source / name),
+                        "width": 64,
+                        "height": 64,
+                    }
+                ],
+                [{"id": 1, "image_id": 1, "category_id": 1, "bbox": [2, 3, 8, 9]}],
+            ),
+        )
+        return f"{path}::{self.source}"
+
+    def _assemble(
+        self,
+        iteration: int,
+        route: Path,
+        report: Path,
+        *,
+        previous: Path | None,
+        synthetic: list[str],
+    ) -> tuple[Path, dict]:
+        output = self.root / f"train{iteration}" / "annotations.json"
+        result = assemble_deft_od_aoi_coco.run(
+            argparse.Namespace(
+                previous_assembled_coco=str(previous) if previous else None,
+                route_manifest=[str(route)],
+                current_routing_report=str(report),
+                synthetic_source=synthetic,
+                output_coco=str(output),
+                output_images_dir=str(output.parent / "images"),
+                link_mode="copy",
+            )
+        )
+        return output, result
+
+    def test_three_iterations_retain_every_previous_image(self) -> None:
+        route1, report1 = self._route(
+            1,
+            [
+                {
+                    "source_path": str(self.source / "real1.png"),
+                    "width": 64,
+                    "height": 64,
+                    "boxes": [[1, 1, 10, 10]],
+                    "kind": "real_defect",
+                }
+            ],
+            real=1,
+            clean=0,
+        )
+        train1, result1 = self._assemble(
+            1,
+            route1,
+            report1,
+            previous=None,
+            synthetic=[self._synthetic(1, "synth1.png")],
+        )
+
+        route2, report2 = self._route(
+            2,
+            [
+                {
+                    "source_path": str(self.source / "real2.png"),
+                    "width": 64,
+                    "height": 64,
+                    "boxes": [[4, 4, 11, 12]],
+                    "kind": "real_defect",
+                },
+                {
+                    "source_path": str(self.source / "clean2.png"),
+                    "width": 64,
+                    "height": 64,
+                    "boxes": [],
+                    "kind": "clean_negative",
+                    "allow_empty_annotations": True,
+                },
+            ],
+            real=2,
+            clean=1,
+        )
+        train2, result2 = self._assemble(
+            2,
+            route2,
+            report2,
+            previous=train1,
+            synthetic=[self._synthetic(2, "synth2.png")],
+        )
+
+        route3, report3 = self._route(
+            3,
+            [
+                {
+                    "source_path": str(self.source / "real3.png"),
+                    "width": 64,
+                    "height": 64,
+                    "boxes": [[7, 8, 9, 10]],
+                    "kind": "real_defect",
+                },
+                {
+                    "source_path": str(self.source / "clean3.png"),
+                    "width": 64,
+                    "height": 64,
+                    "boxes": [],
+                    "kind": "clean_negative",
+                    "allow_empty_annotations": True,
+                },
+            ],
+            real=3,
+            clean=2,
+        )
+        train3, result3 = self._assemble(
+            3,
+            route3,
+            report3,
+            previous=train2,
+            synthetic=[],
+        )
+
+        image_sets = []
+        for path in (train1, train2, train3):
+            assembled = json.loads(path.read_text(encoding="utf-8"))
+            image_sets.append({image["source_path"] for image in assembled["images"]})
+        self.assertTrue(image_sets[0] < image_sets[1] < image_sets[2])
+        self.assertEqual(result1["by_kind"], {"real_defect": 1, "synthetic_defect": 1})
+        self.assertEqual(
+            result2["by_kind"],
+            {"clean_negative": 1, "real_defect": 2, "synthetic_defect": 2},
+        )
+        self.assertEqual(
+            result3["by_kind"],
+            {"clean_negative": 2, "real_defect": 3, "synthetic_defect": 2},
+        )
+        self.assertEqual(result2["retained_previous_images"], 2)
+        self.assertEqual(result3["retained_previous_images"], 5)
+
+    def test_cumulative_ledger_gate_rejects_missing_previous_coco(self) -> None:
+        route, report = self._route(
+            2,
+            [
+                {
+                    "source_path": str(self.source / "real2.png"),
+                    "width": 64,
+                    "height": 64,
+                    "boxes": [[4, 4, 11, 12]],
+                    "kind": "real_defect",
+                }
+            ],
+            real=2,
+            clean=0,
+        )
+        with self.assertRaisesRegex(ValueError, "include the immediately previous"):
+            self._assemble(2, route, report, previous=None, synthetic=[])
+        self.assertFalse((self.root / "train2").exists())
 
 
 class PolicyTest(unittest.TestCase):
@@ -905,7 +1112,9 @@ class EndToEndDataTest(unittest.TestCase):
         output_coco = self.root / "train" / "annotations.json"
         assembly = assemble_deft_od_aoi_coco.run(
             argparse.Namespace(
+                previous_assembled_coco=None,
                 route_manifest=[str(route_dir / "mined_manifest.json")],
+                current_routing_report=str(route_dir / "routing_report.json"),
                 synthetic_source=[],
                 output_coco=str(output_coco),
                 output_images_dir=str(self.root / "train" / "images"),
@@ -1012,6 +1221,88 @@ class EndToEndDataTest(unittest.TestCase):
         )
         self.assertEqual(selection["action"], "extend")
         self.assertEqual(selection["extended_num_epochs"], 60)
+
+        extension_status = self.root / "extension_status.json"
+        extension_status.write_text(
+            json.dumps({"epoch": 48, "kpi": {"val_mAP50": 0.45}}) + "\n",
+            encoding="utf-8",
+        )
+        combined_selection = select_deft_od_aoi_checkpoint.run(
+            argparse.Namespace(
+                policy=str(policy_path),
+                status=[str(main_status), str(extension_status)],
+                checkpoint_dir=str(checkpoint_dir),
+                planned_epochs=60,
+                extension_applied=True,
+                output=str(self.root / "combined_selection.json"),
+            )
+        )
+        self.assertEqual(combined_selection["action"], "select")
+        self.assertEqual(combined_selection["best_epoch"], 47)
+        self.assertEqual(len(combined_selection["status_files"]), 2)
+
+        terminal = checkpoint_dir / "model_epoch_047.pth"
+        extension_path = specs_dir / "train_extension.yaml"
+        extension = prepare_rtdetr_extension_spec.run(
+            argparse.Namespace(
+                input=str(specs_dir / "train.yaml"),
+                output=str(extension_path),
+                resume_checkpoint=str(terminal),
+                expected_epochs=48,
+                extended_epochs=60,
+            )
+        )
+        self.assertEqual(extension["extended_num_epochs"], 60)
+        extension_spec = yaml.safe_load(extension_path.read_text(encoding="utf-8"))
+        self.assertEqual(extension_spec["train"]["num_epochs"], 60)
+        self.assertEqual(
+            extension_spec["train"]["resume_training_checkpoint_path"],
+            str(terminal.resolve()),
+        )
+        self.assertEqual(extension_spec["dataset"]["workers"], 0)
+        with self.assertRaisesRegex(ValueError, "terminal checkpoint"):
+            prepare_rtdetr_extension_spec.run(
+                argparse.Namespace(
+                    input=str(specs_dir / "train.yaml"),
+                    output=str(extension_path),
+                    resume_checkpoint=str(checkpoint_dir / "model_epoch_045.pth"),
+                    expected_epochs=48,
+                    extended_epochs=60,
+                )
+            )
+
+        measurement_dir = self.root / "measurement_staging"
+        published_measurement_dir = specs_dir
+        measurement_selection = self.root / "measurement_selection.json"
+        write_json(
+            measurement_selection,
+            {
+                "action": "select",
+                "best_epoch": 47,
+                "best_kpi_mAP50": 0.5,
+                "selected_checkpoint": str(terminal.resolve()),
+                "planned_epochs": 60,
+                "extension_applied": True,
+            },
+        )
+        measurement = prepare_rtdetr_measurement_specs.run(
+            argparse.Namespace(
+                train_spec=str(specs_dir / "train.yaml"),
+                kpi_infer_spec=str(specs_dir / "kpi_infer.yaml"),
+                test_infer_spec=str(specs_dir / "test_infer.yaml"),
+                selection=str(measurement_selection),
+                kpi_coco=str(self.kpi_coco),
+                test_coco=str(self.test_coco),
+                output_dir=str(measurement_dir),
+                published_output_dir=str(published_measurement_dir),
+                results_root=str(train_results),
+            )
+        )
+        self.assertNotIn(str(measurement_dir.resolve()), json.dumps(measurement))
+        self.assertEqual(
+            measurement["specs"]["kpi"]["evaluate"],
+            os.path.abspath(published_measurement_dir / "kpi_evaluate_selected.yaml"),
+        )
 
         disabled_policy = self.root / "policy_no_probes.json"
         write_json(

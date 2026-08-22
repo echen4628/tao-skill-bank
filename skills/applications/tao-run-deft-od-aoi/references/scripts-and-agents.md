@@ -23,10 +23,12 @@ preload every reference or leaf skill.
 | `prepare_deft_od_aoi_siglip_queries.py` | route library | Query-crop implementation used by the public routing driver. |
 | `route_deft_od_aoi_siglip.py` | route library | Ranking/admission implementation used by the public routing driver. |
 | `route_deft_od_aoi.py` | legacy | Historical pocket-local DCT/uniform router; do not use for the SigLIP-only contract. |
-| `assemble_deft_od_aoi_coco.py` | assemble | Cumulative binary COCO with explicit clean negatives. |
+| `assemble_deft_od_aoi_coco.py` | assemble | Cumulative binary COCO from the previous assembly plus current admissions, with router-ledger count gates and explicit clean negatives. |
 | `write_rtdetr_specs.py` | train | Nested train, inference, and optional probe specs. |
 | `select_deft_od_aoi_probe.py` | train | KPI-best probe deltas and size-based epoch budget. Skip when probes are disabled. |
 | `select_deft_od_aoi_checkpoint.py` | train | KPI-best `model_epoch_*.pth` and optional +12 epoch extension. |
+| `prepare_rtdetr_extension_spec.py` | train | Build the one policy-approved dynamic-budget +12 resume spec from the terminal checkpoint. |
+| `prepare_rtdetr_measurement_specs.py` | measure | Freeze KPI/test inference and evaluation specs plus a manifest for the selected checkpoint; supports separate staged and published output identities. |
 | `deft_od_aoi_policy.py` | library | Policy construction, SigLIP-only invariants, validation, and epoch budget. |
 
 ## Stage reference modules
@@ -45,7 +47,8 @@ command, spec schema, and pitfalls.
 | Route / admit | `references/gap-routing.md`, `references/data-contract.md` | *(bundled — no miner skill)* | Global role-separated cosine rank, gap-driven doses, audit, and admission. On node-local platforms, `stage-coco` materializes only the frozen source/clean views; `commit` gates the outputs. |
 | Synthetic (optional) | `references/pipeline.md` §4 | `tao-prepare-anomalygennext-inputs`, then `tao-generate-image-embeddings`, then `tao-generate-od-defects` | FN testcases, embeddings, generation, validated binary COCO. DEFT OD AOI admits only that COCO. |
 | Assemble | `references/data-contract.md` | *(bundled)* | Cumulative train COCO. Glue: `assemble_deft_od_aoi_coco.py`. |
-| Probe / train / select | `references/training-policy.md` | `tao-train-rtdetr` action `train` | Fresh-base training from the frozen checkpoint. Glue: `write_rtdetr_specs.py`, `select_deft_od_aoi_probe.py`, `select_deft_od_aoi_checkpoint.py`. `automl_policy: off`. |
+| Probe / train / select | `references/training-policy.md` | `tao-train-rtdetr` action `train` | Fresh-base training from the frozen checkpoint. Glue: `write_rtdetr_specs.py`, `select_deft_od_aoi_probe.py`, `select_deft_od_aoi_checkpoint.py`, `prepare_rtdetr_extension_spec.py`. `automl_policy: off`. |
+| Selected measurement | `references/pipeline.md` §7, `references/training-policy.md` | `tao-train-rtdetr` actions `inference` and `evaluate` | Freeze four selected-checkpoint specs with `prepare_rtdetr_measurement_specs.py`; KPI selects and routes, test reports only. |
 | Final model soup | `references/pipeline.md` §8, `references/training-policy.md` | `tao-model-soup` | Greedy KPI-only averaging of compatible iteration-selected checkpoints into one final RT-DETR checkpoint. |
 
 If an overlay or mapped skill is missing, stop. Do not substitute guessed

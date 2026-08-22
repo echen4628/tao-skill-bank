@@ -113,12 +113,19 @@ only adds DEFT OD AOI overlays and bundled glue.
    texture labels do not gate search.
 4. Generate and validate the requested synthetic dose when enabled.
 5. Assemble one cumulative binary COCO containing admitted real positives,
-   clean negatives, and admitted synthetic positives.
+   clean negatives, and admitted synthetic positives. From iteration 2 onward,
+   pass the immediately previous assembled COCO plus only the current route and
+   synthetic additions; require the router's cumulative real/clean counts to
+   match before publishing.
 6. Train every iteration from the same frozen base checkpoint. Use the frozen
    training policy and select the checkpoint using KPI validation AP50 only.
-7. Infer the selected checkpoint on KPI and test, report both, create loose and
-   strict KPI gaps for iteration N, then repeat. Do not stop early on a metric
-   target.
+   Use `prepare_rtdetr_extension_spec.py` for the one permitted dynamic-budget
+   extension instead of assuming 36→48 epochs.
+7. Freeze all four KPI/test inference/evaluation specs with
+   `prepare_rtdetr_measurement_specs.py`, then measure the selected checkpoint,
+   create loose and strict KPI gaps for iteration N, and repeat. Keep its staged
+   write path separate from its durable published identity. Do not stop early
+   on a metric target.
 8. After the final iteration, invoke `tao-model-soup` on every compatible
    iteration-selected checkpoint when the frozen model-soup policy is enabled.
    Greedy selection uses KPI only. Freeze that result, then evaluate it once on

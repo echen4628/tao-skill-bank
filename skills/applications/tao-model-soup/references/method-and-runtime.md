@@ -90,6 +90,13 @@ only after final hashing succeeds. Candidate checkpoints are temporary unless
 `--keep-candidates` is set; evaluation specs, logs, and score records remain
 for audit.
 
+On node-local platforms, pass each durable checkpoint identity through
+`--published-checkpoint` in the same order as its staged `--checkpoint`, plus
+`--published-output-dir` for the durable result root. These values affect only
+manifest provenance; loading, averaging, and evaluation continue to use the
+staged runtime paths. Published paths must be absolute and remain verbatim in
+the manifest; do not canonicalize shared-filesystem aliases with `resolve()`.
+
 On evaluator failure, inspect that candidate's `evaluation.log`, correct the
 dataset/spec/runtime problem, and start a new platform job-record. The CLI
 refuses to replace an existing final checkpoint unless `--overwrite` was

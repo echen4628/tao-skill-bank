@@ -142,6 +142,177 @@ class SpecTest(unittest.TestCase):
             self.assertEqual(score, 0.75)
 
 
+class PublishedPathTest(unittest.TestCase):
+    def test_parse_args_keeps_runtime_and_published_identities_separate(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = [(root / "scratch-a.pth").resolve(), (root / "scratch-b.pth").resolve()]
+            published = [
+                (root / "durable-a.pth").resolve(),
+                (root / "durable-b.pth").resolve(),
+            ]
+            for path in runtime:
+                path.write_bytes(b"checkpoint")
+            args = tao_model_soup.parse_args(
+                [
+                    "--method",
+                    "uniform",
+                    "--checkpoint",
+                    str(runtime[0]),
+                    "--published-checkpoint",
+                    str(published[0]),
+                    "--checkpoint",
+                    str(runtime[1]),
+                    "--published-checkpoint",
+                    str(published[1]),
+                    "--output-dir",
+                    str(root / "scratch-output"),
+                    "--published-output-dir",
+                    str(root / "durable-output"),
+                ]
+            )
+            self.assertEqual(args.checkpoint, runtime)
+            self.assertEqual(args.published_checkpoint, published)
+            self.assertEqual(args.published_output_dir, root / "durable-output")
+
+    def test_rejects_incomplete_published_checkpoint_mapping(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with self.assertRaises(SystemExit):
+                tao_model_soup.parse_args(
+                    [
+                        "--method",
+                        "uniform",
+                        "--checkpoint",
+                        str(root / "a.pth"),
+                        "--checkpoint",
+                        str(root / "b.pth"),
+                        "--published-checkpoint",
+                        str(root / "durable-a.pth"),
+                        "--output-dir",
+                        str(root / "output"),
+                    ]
+                )
+
+    def test_preserves_published_symlink_alias_without_resolving(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            actual = root / "actual"
+            actual.mkdir()
+            alias = root / "alias"
+            alias.symlink_to(actual, target_is_directory=True)
+            checkpoints = [root / "a.pth", root / "b.pth"]
+            for path in checkpoints:
+                path.write_bytes(b"checkpoint")
+            args = tao_model_soup.parse_args(
+                [
+                    "--method",
+                    "uniform",
+                    "--checkpoint",
+                    str(checkpoints[0]),
+                    "--published-checkpoint",
+                    str(alias / "durable-a.pth"),
+                    "--checkpoint",
+                    str(checkpoints[1]),
+                    "--published-checkpoint",
+                    str(alias / "durable-b.pth"),
+                    "--output-dir",
+                    str(root / "runtime-output"),
+                    "--published-output-dir",
+                    str(alias / "durable-output"),
+                ]
+            )
+            self.assertEqual(args.published_checkpoint[0], alias / "durable-a.pth")
+            self.assertEqual(args.published_output_dir, alias / "durable-output")
+
+    def test_main_publishes_all_manifest_checkpoint_identities(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            runtime = [
+                (root / "scratch-a.pth").resolve(),
+                (root / "scratch-b.pth").resolve(),
+            ]
+            published = [Path("/lustre/models/a.pth"), Path("/lustre/models/b.pth")]
+            output = root / "scratch-output"
+            for path in runtime:
+                path.write_bytes(b"checkpoint")
+
+            records = [
+                {"path": str(path.resolve()), "sha256": f"hash-{index}", "size_bytes": 10}
+                for index, path in enumerate(runtime)
+            ]
+            fake = FakeTorch({})
+            original_load_torch = tao_model_soup.load_torch
+            original_inspect = tao_model_soup.inspect_checkpoints
+            original_greedy = tao_model_soup.greedy_select
+            original_merge = tao_model_soup.merge_checkpoints
+            try:
+                tao_model_soup.load_torch = lambda: fake
+                tao_model_soup.inspect_checkpoints = lambda *_: (
+                    records,
+                    "state_dict",
+                    [{"floating": True}],
+                )
+                tao_model_soup.greedy_select = lambda *_args, **_kwargs: (
+                    runtime,
+                    [
+                        {"checkpoint": str(runtime[0].resolve()), "score": 0.7},
+                        {"checkpoint": str(runtime[1].resolve()), "score": 0.6},
+                    ],
+                    [
+                        {
+                            "checkpoint": str(runtime[1].resolve()),
+                            "score": 0.71,
+                            "accepted": True,
+                        }
+                    ],
+                    0.71,
+                )
+
+                def fake_merge(_ingredients: object, path: Path, **_: object) -> dict[str, int]:
+                    path.write_bytes(b"soup")
+                    return {"floating_tensors_averaged": 1}
+
+                tao_model_soup.merge_checkpoints = fake_merge
+                result = tao_model_soup.main(
+                    [
+                        "--method",
+                        "greedy",
+                        "--checkpoint",
+                        str(runtime[0]),
+                        "--published-checkpoint",
+                        str(published[0]),
+                        "--checkpoint",
+                        str(runtime[1]),
+                        "--published-checkpoint",
+                        str(published[1]),
+                        "--eval-command-json",
+                        '["unused"]',
+                        "--output-dir",
+                        str(output),
+                        "--published-output-dir",
+                        "/lustre/soup",
+                    ]
+                )
+            finally:
+                tao_model_soup.load_torch = original_load_torch
+                tao_model_soup.inspect_checkpoints = original_inspect
+                tao_model_soup.greedy_select = original_greedy
+                tao_model_soup.merge_checkpoints = original_merge
+
+            self.assertEqual(result, 0)
+            manifest = json.loads((output / "soup_manifest.json").read_text())
+            serialized = json.dumps(manifest)
+            self.assertNotIn(str(root), serialized)
+            self.assertEqual(
+                [row["checkpoint"] for row in manifest["individual_scores"]],
+                [str(path) for path in published],
+            )
+            self.assertEqual(
+                manifest["candidate_trials"][0]["checkpoint"], str(published[1])
+            )
+
+
 class GreedyTest(unittest.TestCase):
     def test_greedy_uses_equal_original_ingredients_and_strict_gate(self) -> None:
         checkpoints = [Path("a.pth"), Path("b.pth"), Path("c.pth")]

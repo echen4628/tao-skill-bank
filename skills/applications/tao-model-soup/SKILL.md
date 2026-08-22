@@ -134,6 +134,13 @@ ingredients, equal final weights, non-floating tensor policy, and final hash.
 Floating tensors are averaged on CPU; non-floating tensors are copied from the
 first ingredient and their disagreement count is reported.
 
+When a platform stages checkpoints and output on node-local storage, repeat
+`--published-checkpoint` once per staged `--checkpoint` and pass
+`--published-output-dir` for the durable result directory. Computation still
+uses node-local paths; the manifest records durable identities that remain
+valid after scratch cleanup. Published paths must be absolute and are preserved
+verbatim, including intentional shared-filesystem symlink aliases.
+
 ## Hard gates
 
 - Reject missing, duplicate, or untrusted checkpoint inputs.

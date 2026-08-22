@@ -100,8 +100,13 @@ single `defect` label across COCO, KITTI, inference class map, and gap output.
 
 ## Assembly
 
-Pass every committed iteration manifest, plus every admitted synthetic COCO,
-to `scripts/assemble_deft_od_aoi_coco.py`. It deduplicates by resolved source path,
-assigns category id 1, retains clean images with zero boxes, and emits one
-cumulative training COCO. Use symlinks only when the selected platform mounts
-the source paths; otherwise pass `--link-mode copy`.
+For iteration 1, pass the current committed route manifest, current routing
+report, and current admitted synthetic COCO to
+`scripts/assemble_deft_od_aoi_coco.py`. For every later iteration, also pass
+the immediately previous assembled COCO through `--previous-assembled-coco`;
+do not reconstruct cumulative state by remembering only prior synthetic roots.
+The script deduplicates by resolved source path, assigns category id 1, retains
+clean images with zero boxes, and refuses output when real/clean counts differ
+from the current routing report's cumulative ledger totals. Use symlinks only
+when the selected platform mounts the source paths; otherwise pass
+`--link-mode copy`.

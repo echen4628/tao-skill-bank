@@ -187,3 +187,10 @@ Run the gate independently with:
 - Refuse every attempt to reuse an existing preparation output directory.
 - Do not regenerate or repair frozen files in place after the manifest is
   complete.
+- On Pyxis/SLURM, pre-create an empty durable mount target with mode `0755`
+  before overlaying a node-local preparation tree. Pyxis may otherwise create
+  a nested Lustre target with mode `000`, causing successful work to fail only
+  at copy-back. Execute the full mutable tree from `/raid/scratch`, copy back
+  only on workload success, and emit `ERROR` if either workload or bounded
+  copy-back fails. Never apply this recovery by changing permissions on a
+  nonempty or unrelated target.

@@ -439,7 +439,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--checkpoint", action="append", required=True, help="Repeat for each trusted checkpoint."
     )
+    parser.add_argument(
+        "--published-checkpoint",
+        action="append",
+        help=(
+            "Optional durable identity for each staged --checkpoint, in the same order. "
+            "Used only in the manifest."
+        ),
+    )
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument(
+        "--published-output-dir",
+        help="Optional durable output directory recorded in the manifest.",
+    )
     parser.add_argument("--output-name", default="model_soup.pth")
     parser.add_argument("--state-dict-key")
     parser.add_argument("--eval-spec", help="Nested TAO RT-DETR KPI evaluate YAML.")
@@ -461,6 +473,23 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     args.checkpoint = [Path(value).expanduser().resolve() for value in args.checkpoint]
     args.output_dir = Path(args.output_dir).expanduser().resolve()
+    if args.published_checkpoint:
+        if len(args.published_checkpoint) != len(args.checkpoint):
+            parser.error("--published-checkpoint must be repeated once per --checkpoint")
+        args.published_checkpoint = [
+            Path(value).expanduser() for value in args.published_checkpoint
+        ]
+        if not all(path.is_absolute() for path in args.published_checkpoint):
+            parser.error("--published-checkpoint values must be absolute paths")
+    else:
+        args.published_checkpoint = list(args.checkpoint)
+    args.published_output_dir = (
+        Path(args.published_output_dir).expanduser()
+        if args.published_output_dir
+        else args.output_dir
+    )
+    if not args.published_output_dir.is_absolute():
+        parser.error("--published-output-dir must be an absolute path")
     args.eval_spec = Path(args.eval_spec).expanduser().resolve() if args.eval_spec else None
     if len(args.checkpoint) < 2:
         parser.error("at least two --checkpoint values are required")
@@ -542,6 +571,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         final_hash = sha256_file(final_path)
         by_path = {record["path"]: record for record in records}
+        published_by_path = {
+            str(runtime): str(published)
+            for runtime, published in zip(args.checkpoint, args.published_checkpoint)
+        }
+        published_inputs = []
+        for record in records:
+            published = dict(record)
+            published["path"] = published_by_path[record["path"]]
+            published_inputs.append(published)
+        published_individual_scores = [
+            {
+                **row,
+                "checkpoint": published_by_path.get(row["checkpoint"], row["checkpoint"]),
+            }
+            for row in individual_scores
+        ]
+        published_candidate_trials = [
+            {
+                **row,
+                "checkpoint": published_by_path.get(row["checkpoint"], row["checkpoint"]),
+            }
+            for row in candidate_trials
+        ]
         manifest = {
             "schema_version": 1,
             "method": args.method,
@@ -554,12 +606,13 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "tensor_count": len(descriptor),
                 "floating_tensor_count": sum(row["floating"] for row in descriptor),
             },
-            "inputs": records,
-            "individual_scores": individual_scores,
-            "candidate_trials": candidate_trials,
+            "inputs": published_inputs,
+            "individual_scores": published_individual_scores,
+            "candidate_trials": published_candidate_trials,
             "ingredients": [
                 {
                     **by_path[str(path)],
+                    "path": published_by_path[str(path)],
                     "weight": 1.0 / len(ingredients),
                 }
                 for path in ingredients
@@ -567,7 +620,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "final_score": final_score,
             "merge": merge_report,
             "output": {
-                "path": str(final_path),
+                "path": str(args.published_output_dir / args.output_name),
                 "sha256": final_hash,
                 "size_bytes": final_path.stat().st_size,
             },
