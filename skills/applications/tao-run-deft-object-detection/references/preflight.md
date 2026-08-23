@@ -4,6 +4,12 @@ Resolve everything you can before asking the user. Parameter precedence is stric
 
 ## Checks, in order
 
+0. **Select the detector boundary and taxonomy.** Resolve `grounding_dino` or
+   `rtdetr` from the user's model/checkpoint. Do not infer AOI from directory
+   names. If the use case is AOI binary detection, offer the optional projection
+   in `references/aoi-class-projection.md`; perform it before init, then treat
+   `defect` as an ordinary one-class RT-DETR dataset.
+
 1. **Workspace and run directory.** Resolve to an absolute path (`WORKSPACE=$(realpath -m <workspace>)`); never hand a quoted `~/...` path to Python. Derive `RESULTS_DIR=${WORKSPACE}/results/run_$(date +%Y%m%d_%H%M%S)`. Do **not** create it before the user gate. If resuming, set `RESULTS_DIR` to the existing run directory (detect via `results/run_*/deft_state.json`).
 
 2. **Host Python.** Probe with the bundled launcher:
@@ -74,10 +80,10 @@ Resolve everything you can before asking the user. Parameter precedence is stric
 
 5. **Image presence.** `docker image inspect "$TAO_PYT_IMAGE" "$TAO_DS_IMAGE"`. Record anything missing as `WILL_PULL_AFTER_APPROVAL`; do not pull before the gate.
 
-6. **Zero-shot checkpoint — pull it from NGC unless the user supplied one.** The baseline
+6. **Baseline checkpoint.** The baseline
    scores this checkpoint without training and every iteration fine-tunes from it.
 
-   **The user's own path always wins.** When they did not give one, fetch the published
+   **The user's own path always wins.** For Grounding DINO, when they did not give one, fetch the published
    checkpoint rather than asking:
 
    Pre-Flight resolves the path only. `--plan` reports whether the checkpoint is
@@ -118,7 +124,15 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    image the checkpoint was trained with in the Summary; the pinned image is not
    automatically the right one.
 
-7. **Train-spec template.** Must exist and parse as YAML, and `dataset.train_data_sources` must be a **list** (Grounding DINO ODVG shape). A mapping there means the spec is COCO-shaped and this workflow cannot append to it.
+   For RT-DETR, require a user-supplied, trainable checkpoint whose backbone,
+   geometry, and class head match the train spec. Do not use the Grounding DINO
+   fetch helper, resize the head, or silently start from random weights. A projected
+   one-class AOI dataset requires a one-class-compatible RT-DETR checkpoint/spec.
+
+7. **Train-spec template.** Must exist and parse as YAML, and
+   `dataset.train_data_sources` must be a list. Grounding DINO entries use
+   `{image_dir,json_file,label_map}`; RT-DETR entries use `{image_dir,json_file}`.
+   Validate the shape against the selected detector.
 
    **Seed training data is optional.** Unlike the AOI loop — where ChangeNet must learn the task from a mandatory seed set — Grounding DINO is zero-shot capable and can start cold. Inspect the list and branch:
 
@@ -145,6 +159,11 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    pool actually holds annotations for, and init cross-checks that against the target classes.
    A pool prepared for a different class set does not make mining fail — it makes mining
    return neighbours of something else, and the affected class simply never improves.
+
+   RT-DETR additionally requires the prepared pool's `coco.json` as
+   `source_detection_file` even with global mining. Pre-Flight validates that its
+   category ids are dense and its category names exactly match the target classes;
+   init freezes this order into `rtdetr_classmap.txt`.
 
 9. **Resolve the encoder — local snapshot first, never an implicit online default.**
 
@@ -267,7 +286,7 @@ Print this and **STOP — wait for explicit approval.** This is the only user ga
 ### Run config
 | Field                  | Value                                          | Source            |
 | ---------------------- | ---------------------------------------------- | ----------------- |
-| Model                  | Grounding DINO (ODVG)                          | workflow          |
+| Model                  | Grounding DINO (ODVG) / RT-DETR (COCO)         | user/resolved     |
 | Max iterations         | N                                              | user              |
 | Stop condition         | max_iterations reached, or zero weak images.
                           mAP is reported, not gated — no target.         | workflow          |
@@ -283,7 +302,7 @@ Print this and **STOP — wait for explicit approval.** This is the only user ga
 ### Inputs
 | Field                     | Value                                        |
 | ------------------------- | -------------------------------------------- |
-| Zero-shot checkpoint      | <path>                                       |
+| Baseline checkpoint       | <path> (zero-shot for Grounding DINO)        |
 | Train spec template       | <path> (N base source(s); 0 = mined-only)    |
 | Source pool embeddings    | <path> (N rows, encoder: <model>)            |
 | Source pool annotations   | <path> (N jsonl, labelmap: found/synthesized)|

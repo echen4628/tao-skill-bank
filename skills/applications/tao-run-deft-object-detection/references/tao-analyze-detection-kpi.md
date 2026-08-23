@@ -1,5 +1,10 @@
 # DEFT OD — KPI Analyze Stage Overlay
 
+Both Grounding DINO and RT-DETR inference write the KITTI label directory this
+stage already consumes. For RT-DETR, its newline classmap must match the KPI
+mapping order frozen at init. An AOI-projected run scores binary `defect` here;
+the preserved defect-type sidecar is reserved for a later per-type KPI extension.
+
 Layers loop conventions on top of `tao-skill-bank:tao-analyze-detection-kpi`. Read that skill's `SKILL.md` for the full field reference and pitfalls.
 
 ## When to invoke

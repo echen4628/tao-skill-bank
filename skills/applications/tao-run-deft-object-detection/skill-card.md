@@ -24,7 +24,7 @@ Mitigation: Check `coverage_pct` in `summary.json` after each mining stage; expa
 
 ## Skill Output: <br>
 **Output Type(s):** [Shell commands, Files, Analysis, HTML Report] <br>
-**Output Format:** [Markdown with inline bash code blocks, JSON state, HTML loop report] <br>
+**Output Format:** [Markdown with inline bash code blocks, JSON state, Markdown loop report] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 

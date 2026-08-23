@@ -1,5 +1,9 @@
 # Pipeline, State, and Runtime Behavior
 
+The state machine is detector-neutral. `config.detector` changes only the
+`stage` artifacts and the `train`/`inference` overlay selected by the audit;
+stage ordering and every analytics/mining transition remain unchanged.
+
 ## Containers run as the calling user
 
 Every TAO invocation in this skill passes `--user "$(id -u):$(id -g)"`.

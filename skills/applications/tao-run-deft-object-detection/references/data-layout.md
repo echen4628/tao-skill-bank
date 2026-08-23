@@ -1,5 +1,9 @@
 # Data Contract and Output Layout
 
+Grounding DINO trains from the staged ODVG view. RT-DETR trains from an
+additional staged COCO view of the same images. Both detectors emit KITTI
+inference labels, so gap analysis and KPI paths below are shared.
+
 ## Bringing Your Own Data
 
 The loop trains on your detection data. It cannot fabricate or download any of the following.

@@ -81,10 +81,19 @@ STAGE_OVERLAYS = {
     "embed": "references/tao-generate-image-embeddings.md",
     "mine": "references/tao-mine-od-images.md",
     "stage": "references/stage-mined-data.md",
-    "train": "references/grounding-dino.md",
-    "inference": "references/grounding-dino.md",
     "kpi_analyze": "references/tao-analyze-detection-kpi.md",
 }
+
+
+def _overlay_for(next_action: str, state: dict[str, Any]) -> str:
+    if next_action in {"train", "inference"}:
+        config = state.get("config") if isinstance(state.get("config"), dict) else {}
+        return (
+            "references/rtdetr.md"
+            if config.get("detector") == "rtdetr"
+            else "references/grounding-dino.md"
+        )
+    return STAGE_OVERLAYS.get(next_action, "none")
 
 VALID_LOG_STATUSES = {"ok", "error"}
 # "stopped": loop_stop was committed on a run this audit does not call complete.
@@ -104,6 +113,9 @@ EXTRA_ARTIFACT_FIELDS: dict[str, tuple[str, str]] = {
     "combined_manifest": ("--combined-manifest", "file"),
     # stage: post-merge consistency report
     "merge_validation_report": ("--merge-validation-report", "file"),
+    # RT-DETR stage products. Grounding DINO continues to use the required ODVG artifacts.
+    "staged_coco": ("--staged-coco", "file"),
+    "inference_classmap": ("--inference-classmap", "file"),
 }
 
 # init_deft_state.py pins the source pool in config; `prep` is the stage that
@@ -443,6 +455,43 @@ def audit(results_dir: Path) -> dict[str, Any]:
             f"{sorted(VALID_RUN_STATUSES)}"
         )
 
+    config = state.get("config")
+    config = config if isinstance(config, dict) else {}
+    detector = config.get("detector", "grounding_dino")
+    if detector not in {"grounding_dino", "rtdetr"}:
+        errors.append(
+            f"state.config.detector={detector!r} is invalid; expected grounding_dino or rtdetr"
+        )
+    if detector == "rtdetr":
+        ids = config.get("rtdetr_category_ids")
+        names = config.get("rtdetr_class_names")
+        num_classes = config.get("rtdetr_num_classes")
+        classmap = config.get("inference_classmap")
+        if not isinstance(ids, list) or not ids or any(not _is_int(value) for value in ids):
+            errors.append("state.config.rtdetr_category_ids must be a non-empty integer list")
+        elif ids not in (list(range(len(ids))), list(range(1, len(ids) + 1))):
+            errors.append(f"state.config.rtdetr_category_ids must be dense; got {ids}")
+        elif num_classes != max(ids) + 1:
+            errors.append(
+                f"state.config.rtdetr_num_classes={num_classes!r} must equal max(ids)+1"
+            )
+        if (
+            not isinstance(names, list)
+            or not names
+            or any(not isinstance(name, str) or not name.strip() for name in names)
+            or len(names) != len(set(names))
+            or (isinstance(ids, list) and len(names) != len(ids))
+        ):
+            errors.append("state.config.rtdetr_class_names must be a non-empty unique list")
+        if not classmap or check_artifact(str(classmap), "file"):
+            errors.append(f"state.config.inference_classmap is missing or unreadable: {classmap}")
+        elif isinstance(names, list):
+            actual_names = [line.strip() for line in Path(classmap).read_text().splitlines() if line.strip()]
+            if actual_names != names:
+                errors.append(
+                    f"RT-DETR inference classmap {actual_names} disagrees with frozen names {names}"
+                )
+
     iterations = state.get("iterations")
     if not isinstance(iterations, dict):
         if not load_failed:
@@ -635,6 +684,59 @@ def audit(results_dir: Path) -> dict[str, Any]:
                         f"loop_log commits {phase}/{stage} but state.iterations.{phase}."
                         f"{field} ({flag}) was never recorded"
                     )
+        if detector == "rtdetr" and "stage" in ok_stages_by_phase.get(phase, []):
+            for field, flag in (
+                ("staged_coco", "--staged-coco"),
+                ("inference_classmap", "--inference-classmap"),
+            ):
+                if info.get(field) in (None, ""):
+                    errors.append(
+                        f"RT-DETR {phase}/stage committed without state.iterations.{phase}."
+                        f"{field} ({flag})"
+                    )
+            staged_classmap = info.get("inference_classmap")
+            if (
+                staged_classmap
+                and check_artifact(str(staged_classmap), "file") is None
+                and isinstance(config.get("rtdetr_class_names"), list)
+            ):
+                actual = [
+                    line.strip()
+                    for line in Path(staged_classmap).read_text().splitlines()
+                    if line.strip()
+                ]
+                if actual != config["rtdetr_class_names"]:
+                    errors.append(
+                        f"{phase} staged classmap {actual} disagrees with frozen RT-DETR "
+                        f"class order {config['rtdetr_class_names']}"
+                    )
+            staged_coco = info.get("staged_coco")
+            if staged_coco and check_artifact(str(staged_coco), "file") is None:
+                categories = json.loads(Path(staged_coco).read_text()).get("categories")
+                if not isinstance(categories, list) or not all(
+                    isinstance(row, dict)
+                    and _is_int(row.get("id"))
+                    and str(row.get("name", "")).strip()
+                    for row in categories
+                ):
+                    errors.append(
+                        f"{phase} staged COCO categories must be objects with integer ids "
+                        "and non-empty names"
+                    )
+                else:
+                    ordered = sorted(categories, key=lambda row: row.get("id"))
+                    staged_ids = [row.get("id") for row in ordered]
+                    staged_names = [str(row.get("name", "")).strip() for row in ordered]
+                    if staged_ids != config.get("rtdetr_category_ids"):
+                        errors.append(
+                            f"{phase} staged COCO category ids {staged_ids} disagree with frozen "
+                            f"ids {config.get('rtdetr_category_ids')}"
+                        )
+                    if staged_names != config.get("rtdetr_class_names"):
+                        errors.append(
+                            f"{phase} staged COCO category names {staged_names} disagree with "
+                            f"frozen names {config.get('rtdetr_class_names')}"
+                        )
 
     highest_iteration = max(
         (
@@ -802,7 +904,7 @@ def audit(results_dir: Path) -> dict[str, Any]:
         "last_status": last_event.get("status") if last_event else None,
         "stage_completed_by_phase": completed_by_phase,
         "next_action": next_action,
-        "read_before_action": STAGE_OVERLAYS.get(next_action, "none"),
+        "read_before_action": _overlay_for(next_action, state),
         "terminal": terminal,
         "loop_stop_committed": loop_stop_committed,
         "run_failed": run_failed,

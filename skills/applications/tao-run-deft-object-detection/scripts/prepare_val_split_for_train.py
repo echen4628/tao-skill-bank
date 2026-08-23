@@ -9,7 +9,9 @@ subscripts ``val_data_sources["json_file"]`` unconditionally — so every iterat
 needs one. Deriving it from the pool means it always exists, always matches the
 target classes, and needs nothing from the user.
 
-**The category ids are rewritten to 0-based, and that is the whole point.**
+For Grounding DINO, category ids are rewritten to 0-based. RT-DETR preserves
+the source COCO ids so its train, validation, inference classmap, and KPI labels
+share one frozen category contract.
 Grounding DINO's validation loader does::
 
     classes = [obj["category_id"] for obj in target]      # dataloader/coco.py
@@ -38,7 +40,9 @@ import sys
 from pathlib import Path
 
 
-def build_val_split(coco: dict, fraction: float, seed: int) -> tuple[dict, dict]:
+def build_val_split(
+    coco: dict, fraction: float, seed: int, category_id_policy: str = "zero_based"
+) -> tuple[dict, dict]:
     images = coco.get("images", [])
     if not images:
         raise ValueError("the source COCO has no images")
@@ -57,7 +61,11 @@ def build_val_split(coco: dict, fraction: float, seed: int) -> tuple[dict, dict]
     # Dense 0..N-1 in declaration order. Subtracting the minimum id only works when
     # the ids are already contiguous: {1,3,7} would become {0,2,6}, and 6 indexes
     # past a size-3 class dimension.
-    remap = {c["id"]: index for index, c in enumerate(categories)}
+    remap = (
+        {c["id"]: index for index, c in enumerate(categories)}
+        if category_id_policy == "zero_based"
+        else {c["id"]: c["id"] for c in categories}
+    )
 
     val = {
         "images": picked,
@@ -74,6 +82,7 @@ def build_val_split(coco: dict, fraction: float, seed: int) -> tuple[dict, dict]
         "val_annotations": len(val["annotations"]),
         "fraction": fraction,
         "seed": seed,
+        "category_id_policy": category_id_policy,
         "category_ids_remapped": {c["id"]: remap[c["id"]] for c in categories},
         "categories": {c["name"]: c["id"] for c in val["categories"]},
     }
@@ -90,6 +99,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--seed", type=int, default=1337,
                         help="Selection seed; a resumed run validates on the same images.")
     parser.add_argument("--report-json", default=None)
+    parser.add_argument(
+        "--category-id-policy",
+        choices=("zero_based", "preserve"),
+        default="zero_based",
+        help="Use zero_based for Grounding DINO; preserve for RT-DETR.",
+    )
     return parser.parse_args()
 
 
@@ -104,7 +119,7 @@ def main() -> int:
             raise FileNotFoundError(f"--coco does not exist: {src}")
         coco = json.loads(src.read_text(encoding="utf-8"))
 
-        val, report = build_val_split(coco, args.fraction, args.seed)
+        val, report = build_val_split(coco, args.fraction, args.seed, args.category_id_policy)
         if not val["annotations"]:
             raise ValueError(
                 "the validation split holds no annotations — raise --fraction, or check "

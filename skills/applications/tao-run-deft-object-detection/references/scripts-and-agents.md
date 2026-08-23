@@ -39,6 +39,7 @@ visible without diffing against a container.
 | `coco_to_odvg.yaml` | `annotations convert` COCO→ODVG | formats only |
 | `codetr_inference.yaml` | pool pseudo-labelling | `num_select: 1000` (TAO 300 crowds rare classes out of the pool), `conf_threshold: 0.3`, and the ViT-L/16 architecture the checkpoint requires |
 | `grounding_dino_inference.yaml` | baseline + per-iteration inference | `conf_threshold: 0.0` (keep the full PR curve), `log_scale: auto`, `class_embed_bias: true` |
+| `rtdetr_inference.yaml` | baseline + per-iteration RT-DETR inference | `conf_threshold: 0.0`, input geometry, batch size |
 | `kpi_analyze.yaml` | scoring | `num_recall_points: 11`, `ignore_sqwidth: 40` |
 
 `grounding_dino train` has no overlay: it is built from the full
@@ -51,7 +52,7 @@ a detection takes the class of the caption token it matched, by position — so 
 must be derived from the run's classes, never pinned.
 | `prepare_mapping_for_kpi_analyze.py` | `kpi_analyze` | Narrow the supplied KPI class mapping to the run's target classes, aliases verbatim. A class the model cannot predict would otherwise score a constant 0 and compress the mAP trend. |
 | `prepare_input_for_image_embeddings.py` | `prep` | List the pool image directory into the `filepath` parquet `embedding image_embeddings` reads. Absolute paths, symlinks resolved, sorted — so the same directory always yields the same parquet. |
-| `prepare_val_split_for_train.py` | `prep` | Carve a validation COCO from 10% of the prepared pool, rewriting category ids to **0-based**. `grounding_dino train` cannot run without a validation source, and its loader uses `category_id` verbatim as a dense label index, so a conventional 1-based COCO overflows on the last class. |
+| `prepare_val_split_for_train.py` | `prep` | Carve a deterministic validation COCO. Default `zero_based` serves Grounding DINO; `--category-id-policy preserve` serves RT-DETR. |
 | `await_stage.py` | any long stage | Block until a stage finishes by watching its artifacts or `status.json`. **Never wait on a process name.** Pass `--newer-than <marker touched before launch>` so a retry is not satisfied by the previous attempt's leftovers. |
 | `prepare_class_mappings_for_mining_data_prep.py` | `prep` | Translate one `classes.yaml` into the two mappings TAO folds with: the `category_mapping` block for the Co-DETR inference spec (the real fold, applied at detection time with per-category soft-NMS) and the identity `kitti.mapping` for `annotations convert`. Emits nothing else — TAO does the folding. |
 | `verify_class_contract.py` | Pre-Flight, before every inference | Compare the class list as it appears in captions, the KPI mapping, `deft_state.json`, the ODVG labelmap and `classes.yaml`. Grounding DINO labels a detection by caption *position*, so a reordered or short list relabels every prediction while the run still exits 0. |
@@ -59,9 +60,13 @@ must be derived from the run's classes, never pinned.
 | `validate_pool_coco.py` | `prep` | Verify the converted pool: every target class carries annotations, case-only class mismatches are named, unmapped source classes are reported with counts, and image/annotation counts reconcile. Both TAO consumers drop unmatched names silently, so this is where a broken fold surfaces. |
 | `prepare_budget_for_mining.py` | before `mine` | `desired_unique_count` = weak-image count × multiplier, with optional floor/ceiling. Point `--weak-parquet` at **iteration 1's** parquet on every iteration to hold the budget constant. Writes only the number to stdout. |
 | `stage_mined_odvg.py` | `stage` | Copy mined images, look up ODVG records by basename, renumber `image_id`, remap labels, write `tmm_odvg.jsonl` + `labelmap.json`. **Truncates** the JSONL, so re-running is idempotent. |
+| `stage_mined_coco.py` | `stage` | Stage the same mined images as RT-DETR COCO while preserving category ids and custom annotation metadata; emit the frozen-order classmap. |
 | `validate_odvg_images.py` | `stage` | Hard-fail when an ODVG record references a missing image, when there are no usable records, or when records are duplicated. `--prune` deletes orphan images. Stdlib only. |
 | `prepare_exclude_for_mining.py` | `stage` | Merge this iteration's mined set with the previous cumulative and de-duplicate. `--parquet-b` is optional at iteration 1 only; pass `--iteration N` so a missing previous cumulative is an error after that, rather than silently re-mining trained images. |
 | `prepare_spec_for_train.py` | `train` | Copy the previous spec, append one `{image_dir, json_file, label_map}` entry to `dataset.train_data_sources`, set `train.num_epochs` and `train.optim.lr`. Lowers `checkpoint_interval` / `validation_interval` when they exceed the epoch count, and will not double-add a source already present. |
+| `prepare_rtdetr_spec_for_train.py` | `train` | Append one COCO source, verify train/val category contracts, and set RT-DETR `num_classes`, `eval_class_ids`, validation, checkpoint, epochs, LR, and GPUs. |
+| `resolve_rtdetr_checkpoint.py` | `train` | Select the newest non-empty `model_epoch_<N>.pth` (or `-EMA` when requested). |
+| `project_coco_classes.py` | optional intake | Project multiclass COCO to one detector class while retaining per-box original class/`defect_type` metadata in COCO and a JSONL sidecar. |
 
 ### Script invocation
 
@@ -111,7 +116,7 @@ Never render the report inline in the parent — the agent exists so an end-of-l
 | `embed` | `references/tao-generate-image-embeddings.md` | `tao-skill-bank:tao-generate-image-embeddings` |
 | `mine` | `references/tao-mine-od-images.md` | `tao-skill-bank:tao-mine-od-images` |
 | `stage` | `references/stage-mined-data.md` | *(bundled glue)* |
-| `train`, `inference` | `references/grounding-dino.md` | `tao-skill-bank:tao-train-grounding-dino` |
+| `train`, `inference` | detector-selected `references/grounding-dino.md` or `references/rtdetr.md` | matching TAO model skill |
 | `kpi_analyze` | `references/tao-analyze-detection-kpi.md` | `tao-skill-bank:tao-analyze-detection-kpi` |
 
 **Read only the current stage's overlay.** If one is missing, stop and ask the user to reinstall the plugin — do not substitute generic shell commands.

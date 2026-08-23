@@ -1,5 +1,10 @@
 # DEFT OD — Gap Analysis Stage Overlay
 
+This stage is detector-neutral because it consumes KITTI ground truth and KITTI
+prediction labels. RT-DETR needs no gap-analysis converter. AOI two-pass FP/FN
+routing is outside the current change; a projected AOI run uses this original
+multiclass-capable gap stage with the single class `defect`.
+
 Layers loop conventions on top of `tao-skill-bank:tao-analyze-gaps-od-map`. Read that skill's `SKILL.md` for the full field reference.
 
 ## When to invoke

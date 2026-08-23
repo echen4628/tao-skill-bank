@@ -1,9 +1,9 @@
 ---
 name: tao-run-deft-object-detection
 description: >
-  Run the full DEFT smart-data-augmentation loop for NVIDIA TAO Grounding DINO object detection:
-  zero-shot baseline inference, KPI analysis, per-class gap analysis, SigLIP embedding of weak images,
-  unique-neighbor mining against a source pool, ODVG dataset staging, and retraining — repeated for a
+  Run the full DEFT smart-data-augmentation loop for NVIDIA TAO Grounding DINO or RT-DETR object detection:
+  pretrained baseline inference, KPI analysis, per-class gap analysis, SigLIP embedding of weak images,
+  unique-neighbor mining against a source pool, detector-specific dataset staging, and retraining — repeated for a
   fixed number of iterations. Also prepares the source pool the loop mines from, as a separate run:
   Co-DETR pseudo-labeling, folding to the target classes, KITTI→COCO→ODVG conversion, and embedding.
   Use for prompts like "run the DEFT OD loop", "run smart data augmentation for grounding dino",
@@ -22,6 +22,7 @@ tags:
 - deft
 - object-detection
 - grounding-dino
+- rtdetr
 - mining
 ---
 
@@ -61,7 +62,7 @@ Treat this as a disk-backed state machine, not as a prose recipe.
 
 ## When to Use This Skill
 
-Use this skill when the user wants an agent to run the full smart-data-augmentation loop for a TAO Grounding DINO detection model: zero-shot baseline, gap analysis, mining, dataset growth, and retraining across N iterations.
+Use this skill when the user wants an agent to run the full smart-data-augmentation loop for a TAO Grounding DINO or RT-DETR detection model: baseline, gap analysis, mining, dataset growth, and retraining across N iterations.
 
 - "Run the DEFT OD loop"
 - "Run smart data augmentation for grounding dino"
@@ -77,11 +78,26 @@ loop launches (see `## Two Invocations: Prep, Then Loop`):
 
 Do not use this skill for a single standalone TAO training run, one-off inference, or gap analysis alone. Invoke the relevant leaf skill directly instead.
 
-## Scope: Grounding DINO + ODVG
+## Scope: one loop, selectable detector boundary
 
-This loop targets **Grounding DINO** with **ODVG** training annotations (`tmm_odvg.jsonl` + `labelmap.json`), matching the reference pipeline. `dataset.train_data_sources` is a **list**; each iteration appends one new ODVG source rather than rewriting a combined CSV. DINO and RT-DETR (COCO) are not supported by this workflow — use the leaf skills directly for those.
+The original loop remains intact outside training and inference. Select exactly one
+detector at Pre-Flight; this is not a bundled profile, so the shared mining choices
+remain independently configurable.
 
-The loop does **not** train at baseline. It evaluates the supplied zero-shot / pretrained checkpoint as iteration 0 and only trains from iteration 1 onward, once mining has produced data to add.
+| `config.detector` | Training input | Train/inference overlay | Supported taxonomy |
+|---|---|---|---|
+| `grounding_dino` | ODVG (`tmm_odvg.jsonl` + `labelmap.json`) | `references/grounding-dino.md` | multiclass |
+| `rtdetr` | COCO JSON + image directory | `references/rtdetr.md` | multiclass or one projected class |
+
+For AOI binary detection, read `references/aoi-class-projection.md`. It recommends
+an optional data projection to `defect` while preserving original per-box defect
+types for later diagnostics. After projection, normal RT-DETR training continues;
+there is no separate AOI trainer or hard-coded downstream profile.
+
+The loop does **not** train at baseline. It evaluates the supplied pretrained
+checkpoint as iteration 0 and only trains from iteration 1 onward, once mining
+has produced data to add. Grounding DINO may use its published zero-shot
+checkpoint; RT-DETR requires a task/head-compatible checkpoint.
 
 ## Two Invocations: Prep, Then Loop
 
@@ -122,7 +138,7 @@ Full detail in `references/pipeline-and-state.md`.
 
 1. **Pre-Flight.** Run every check in `references/preflight.md`. Resolve workspace, specs, annotations, the zero-shot checkpoint, the source-pool embedding parquet, and container images. Hard stop only on missing input you cannot resolve yourself.
 2. **Prep (once, before baseline).** If the source pool is not already labeled and embedded, pseudo-label it with Co-DETR, fold the predictions onto the user's target classes, convert KITTI→COCO→ODVG, and embed the pool. Idempotent — each artifact is skipped when it already exists. See `references/prep-source-pool.md`.
-3. **Baseline (iter_0) — no training.** Run `inference` with the supplied zero-shot / pretrained checkpoint, then `kpi_analyze`. Seed `train_grounding_dino.yaml` from the user's template for later iterations to extend.
+3. **Baseline (iter_0) — no training.** Run detector-specific `inference` with the supplied pretrained checkpoint, then `kpi_analyze`. Seed the selected detector's train spec for later iterations to extend.
 4. **Iterate.** For each iteration 1..`max_iterations`, run the seven stages in order:
    `gap_analysis` → `embed` → `mine` → `stage` → `train` → `inference` → `kpi_analyze`.
    Each iteration's `gap_analysis` consumes the **previous** phase's inference labels. Between stages run the audit and follow its one-line disk-backed next action.
@@ -148,7 +164,8 @@ If an *overlay* is missing, stop and ask the user to reinstall the plugin — th
 | `embed` | `references/tao-generate-image-embeddings.md` | `tao-skill-bank:tao-generate-image-embeddings` |
 | `mine` | `references/tao-mine-od-images.md` | `tao-skill-bank:tao-mine-od-images` |
 | `stage` | `references/stage-mined-data.md` | *(bundled glue — no leaf skill)* |
-| `train`, `inference` | `references/grounding-dino.md` | `tao-skill-bank:tao-train-grounding-dino` |
+| `train`, `inference` (`grounding_dino`) | `references/grounding-dino.md` | `tao-skill-bank:tao-train-grounding-dino` |
+| `train`, `inference` (`rtdetr`) | `references/rtdetr.md` | `tao-skill-bank:tao-train-rtdetr` |
 | `kpi_analyze` | `references/tao-analyze-detection-kpi.md` | `tao-skill-bank:tao-analyze-detection-kpi` |
 
 **Path rule (invariant).** Record absolute host paths under `${RESULTS_DIR}`. Mount `"$WORKSPACE:$WORKSPACE"` with identical host and container paths. TAO's `update_results_dir` **appends the task name** to `results_dir`, so passing `results_dir=X` to train writes `X/train/` and to inference writes `X/inference/`. Never append the subdirectory yourself.
@@ -162,6 +179,7 @@ If an *overlay* is missing, stop and ask the user to reinstall the plugin — th
 | Pre-Flight checks, defaults, Summary template | `references/preflight.md` |
 | Pipeline stages, state schema, loop-end sequence | `references/pipeline-and-state.md` |
 | Bundled scripts, glue, reporter agent, stage table | `references/scripts-and-agents.md` |
+| Optional AOI multiclass → `defect` projection | `references/aoi-class-projection.md` |
 
 **`max_iterations` defaults to `1`** — one mine, train and score pass, the smallest run that yields a comparison against the baseline. Confirm it with the user when they have not said how many iterations they want; an unattended run takes the default rather than stopping to ask.
 

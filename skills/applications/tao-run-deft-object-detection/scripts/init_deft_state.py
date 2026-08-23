@@ -47,6 +47,7 @@ from deft_stages import (  # noqa: E402
 )
 
 ALLOCATION_POLICIES = ("global", "class_stratified")
+DETECTORS = ("grounding_dino", "rtdetr")
 # The encoder families the embedding stage accepts. Kept in step with
 # tao-generate-image-embeddings' verify_image_embeddings_spec.py, which enforces the
 # same set against the spec.
@@ -87,6 +88,30 @@ def _split_classes(values: list[str] | None) -> list[str]:
     return classes
 
 
+def _load_rtdetr_class_contract(coco_path: Path, target_classes: list[str]) -> tuple[list[int], list[str]]:
+    """Return the frozen RT-DETR category ids/names after strict validation."""
+    data = json.loads(coco_path.read_text(encoding="utf-8"))
+    categories = data.get("categories")
+    if not isinstance(categories, list) or not categories:
+        raise ValueError(f"RT-DETR source COCO has no categories: {coco_path}")
+    ordered = sorted(categories, key=lambda row: row.get("id"))
+    ids = [row.get("id") for row in ordered]
+    names = [str(row.get("name", "")).strip() for row in ordered]
+    if any(isinstance(value, bool) or not isinstance(value, int) for value in ids):
+        raise ValueError("RT-DETR category ids must be integers")
+    if ids not in (list(range(len(ids))), list(range(1, len(ids) + 1))):
+        raise ValueError(f"RT-DETR requires dense category ids 0..N-1 or 1..N; got {ids}")
+    if len(names) != len(set(names)) or any(
+        not name or "\n" in name or "\r" in name for name in names
+    ):
+        raise ValueError("RT-DETR category names must be non-empty, single-line, and unique")
+    if set(names) != set(target_classes):
+        raise ValueError(
+            f"RT-DETR source COCO classes {names} do not match target classes {target_classes}"
+        )
+    return ids, names
+
+
 def _archive(path: Path, stamp: str) -> Path | None:
     """Move an existing file aside so --force leaves a coherent pair on disk."""
     if not path.is_file() or path.stat().st_size == 0:
@@ -107,6 +132,12 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Number of iterations after the baseline. Default 1: one mine, "
                              "train and score pass, which is the smallest run that produces a "
                              "comparison against the baseline.")
+    parser.add_argument(
+        "--detector",
+        choices=DETECTORS,
+        default="grounding_dino",
+        help="Training/inference model boundary. The remaining DEFT stages are shared.",
+    )
 
     parser.add_argument("--num-gpus", type=int, default=1)
     parser.add_argument("--num-epochs", type=int, required=True,
@@ -123,10 +154,8 @@ def _build_parser() -> argparse.ArgumentParser:
                              "string. Recorded so a resumed run can say which weights the "
                              "earlier iterations were measured against.")
     parser.add_argument("--train-spec-template", default=None,
-                        # Defaults to assets/train_grounding_dino.yaml. Every value in
-                        # it is one the reference already settled, and hand-authoring a
-                        # template is how log_scale/class_embed_bias get reintroduced.
-                        help="Grounding DINO train spec; dataset.train_data_sources must be a list.")
+                        help="Detector-compatible train spec. Defaults to the bundled template "
+                             "for --detector.")
 
     parser.add_argument("--pool-dir", default=None,
                         help="Prepared-pool directory. Derives --source-pool-embeddings, "
@@ -332,12 +361,14 @@ def main() -> int:
         results_dir = _abs(args.results_dir)
         workspace = _abs(args.workspace)
         zero_shot_checkpoint = _abs(args.zero_shot_checkpoint)
-        # No template supplied is the normal case: assets/train_grounding_dino.yaml
-        # already carries every value the reference settled, and hand-authoring one
-        # is how log_scale and class_embed_bias get reintroduced wrong.
+        default_template = (
+            "train_grounding_dino.yaml"
+            if args.detector == "grounding_dino"
+            else "train_rtdetr.yaml"
+        )
         train_spec_template = _abs(
             args.train_spec_template
-            or Path(__file__).resolve().parent.parent / "assets" / "train_grounding_dino.yaml"
+            or Path(__file__).resolve().parent.parent / "assets" / default_template
         )
         # A prepared pool has a fixed internal layout, so one directory determines
         # all four paths. Explicit flags still win, for a pool assembled by hand.
@@ -550,6 +581,23 @@ def main() -> int:
             elif path.suffix.lower() != ".json":
                 warnings.append(f"{flag}: {path} is not a .json file; mining needs COCO JSON")
 
+        rtdetr_category_ids: list[int] | None = None
+        rtdetr_class_names: list[str] | None = None
+        if args.detector == "rtdetr":
+            source_coco = resolved_detection["--source-detection-file"]
+            if not source_coco or not Path(source_coco).is_file():
+                errors.append(
+                    "--detector rtdetr requires an already-prepared --source-detection-file "
+                    "COCO JSON so the category contract can be frozen before baseline"
+                )
+            else:
+                try:
+                    rtdetr_category_ids, rtdetr_class_names = _load_rtdetr_class_contract(
+                        Path(source_coco), target_classes
+                    )
+                except (OSError, json.JSONDecodeError, ValueError) as exc:
+                    errors.append(f"--source-detection-file: {exc}")
+
         # A local snapshot must be a directory; a bare HuggingFace id is left alone.
         model_path_raw = args.embedding_model_path
         looks_local = model_path_raw.startswith(("/", "~", ".")) or Path(model_path_raw).exists()
@@ -639,6 +687,15 @@ def main() -> int:
         stamp = now.strftime("%Y%m%dT%H%M%SZ")
         results_dir.mkdir(parents=True, exist_ok=True)
 
+        inference_classmap: str | None = None
+        if args.detector == "rtdetr":
+            classmap_path = results_dir / "rtdetr_classmap.txt"
+            classmap_path.write_text(
+                "".join(f"{name}\n" for name in (rtdetr_class_names or [])),
+                encoding="utf-8",
+            )
+            inference_classmap = str(classmap_path)
+
         archived = [p for p in (_archive(f, stamp) for f in live) if p is not None]
         # A leftover commit journal describes the run being archived, not this one.
         (results_dir / COMMIT_JOURNAL_NAME).unlink(missing_ok=True)
@@ -653,6 +710,10 @@ def main() -> int:
             "results_dir": str(results_dir),
             "created_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "config": {
+                "detector": args.detector,
+                "training_annotation_format": (
+                    "odvg" if args.detector == "grounding_dino" else "coco"
+                ),
                 "max_iterations": args.max_iterations,
                 "num_gpus": args.num_gpus,
                 "num_epochs": args.num_epochs,
@@ -660,6 +721,12 @@ def main() -> int:
                 "zero_shot_checkpoint": str(zero_shot_checkpoint),
                 "zero_shot_source": args.zero_shot_source,
                 "train_spec_template": str(train_spec_template),
+                "inference_classmap": inference_classmap,
+                "rtdetr_category_ids": rtdetr_category_ids,
+                "rtdetr_num_classes": (
+                    max(rtdetr_category_ids) + 1 if rtdetr_category_ids else None
+                ),
+                "rtdetr_class_names": rtdetr_class_names,
                 "source_pool_embeddings": str(source_pool_embeddings),
                 "source_pool_annotations": str(source_pool_annotations),
                 # Null on a run whose pool already existed. Frozen here so a `prep`
@@ -705,6 +772,7 @@ def main() -> int:
         print(f"  iterations      max {args.max_iterations} · gpus {args.num_gpus} · "
               f"epochs {args.num_epochs} · lr {args.learning_rate}")
         print(f"  target classes  {', '.join(target_classes)}")
+        print(f"  detector        {args.detector}")
         print(f"  ap50            {json.dumps(thresholds, sort_keys=True)}")
         print(f"  mining          {args.allocation_policy} · multiplier {args.multiplier} · "
               f"rare {','.join(rare_classes) if rare_classes else 'none'}")

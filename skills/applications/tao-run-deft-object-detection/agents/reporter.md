@@ -59,7 +59,7 @@ Take **Status** from the audit's `--json` report, never from prose and never fro
 
 **Status:** IN PROGRESS | STOPPED (INCOMPLETE) | COMPLETE | FAILED
 **Iterations completed:** N / max_iterations
-**Model:** Grounding DINO (ODVG)
+**Model:** <derive from state.config.detector and training_annotation_format>
 **Generated:** <UTC timestamp>
 
 ## 1. KPI Trend
@@ -102,7 +102,7 @@ Include the `tokens` column only when the field is present.
 
 ## 4. Configuration
 
-Encoder, allocation policy, rare classes, mining multiplier, per-class AP50
+Detector, annotation format, encoder, allocation policy, rare classes, mining multiplier, per-class AP50
 thresholds, epochs, learning rate, GPU count, and `kpi_conf_threshold`.
 
 State the KPI confidence threshold whenever it is not `0.0`. Every mAP in the

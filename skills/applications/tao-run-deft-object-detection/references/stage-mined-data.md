@@ -1,6 +1,9 @@
 # DEFT OD — Staging Stage Overlay (bundled glue)
 
-This stage has no leaf skill. It turns the miner's flat list of filepaths into a trainable ODVG source, validates it, and extends the exclude set for the next iteration. All three scripts are bundled and run on the host through `scripts/deft_python.sh` — no container.
+This stage has no leaf skill. It turns the miner's flat list of filepaths into
+the selected detector's trainable source, validates it, and extends the exclude
+set for the next iteration. The original ODVG view is always staged; RT-DETR
+also stages a COCO view from the same selected images.
 
 ## Why this is glue and not a skill
 
@@ -38,6 +41,13 @@ Two deliberate differences from the reference implementation:
 Hard-fails when an ODVG record references an image missing on disk, when the file has no usable records, or when duplicate records are present. Catching this here is the point: without it, training fails partway through an epoch with a GPU already allocated. Images with no ODVG record are reported as orphans and are harmless; pass `--prune` to delete them.
 
 This is a hard-stop gate. Do not train on a source that fails validation.
+
+### RT-DETR additional COCO view
+
+When `config.detector=rtdetr`, also run the `stage_mined_coco.py` command in
+`references/rtdetr.md`. It preserves the frozen category ids and any custom
+annotation metadata, and emits `tmm_coco.json` plus an inference classmap. Its
+classmap must exactly match `config.rtdetr_class_names`.
 
 ## Step 3 — Extend the exclude set
 
@@ -99,4 +109,11 @@ Point `--weak-parquet` at **iteration 1's** weak-images parquet on every iterati
   --exclude-parquet "${RESULTS_DIR}/iter${N}/mined_cumulative.parquet" \
   --duration-sec "$(( SECONDS - started ))" \
   --summary "staged <N> images with annotations"
+```
+
+For RT-DETR append:
+
+```bash
+--staged-coco "${RESULTS_DIR}/iter${N}/tmm/annotations/tmm_coco.json" \
+--inference-classmap "${RESULTS_DIR}/iter${N}/tmm/annotations/rtdetr_classmap.txt"
 ```
