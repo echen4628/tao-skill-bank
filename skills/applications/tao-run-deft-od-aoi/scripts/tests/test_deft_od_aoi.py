@@ -1151,6 +1151,7 @@ class EndToEndDataTest(unittest.TestCase):
                 classmap=str(classmap),
                 base_checkpoint=str(base_checkpoint),
                 output_dir=str(specs_dir),
+                published_output_dir=None,
                 results_root=str(train_results),
                 incumbent_config=None,
                 history=None,
@@ -1174,6 +1175,26 @@ class EndToEndDataTest(unittest.TestCase):
                 inference_classmap.read_text(encoding="utf-8"),
                 "background\ndefect\n",
             )
+        staged_specs = self.root / "staged_specs"
+        published_specs = self.root / "published_specs"
+        write_rtdetr_specs.run(
+            argparse.Namespace(
+                policy=str(policy_path), iteration=2, train_coco=str(output_coco),
+                train_images_dir=str(self.root / "train" / "images"),
+                kpi_coco=str(self.kpi_coco), kpi_images_dir=str(self.kpi_images),
+                test_images_dir=str(self.test_images), classmap=str(classmap),
+                base_checkpoint=str(base_checkpoint), output_dir=str(staged_specs),
+                published_output_dir=str(published_specs), results_root=str(train_results),
+                incumbent_config=None, history=None, training_workers=0,
+                inference_workers=0,
+            )
+        )
+        staged_infer = yaml.safe_load((staged_specs / "kpi_infer.yaml").read_text())
+        self.assertEqual(
+            staged_infer["dataset"]["infer_data_sources"]["classmap"],
+            os.path.abspath(published_specs / "inference_classmap.txt"),
+        )
+        self.assertNotIn(str(staged_specs.resolve()), json.dumps(staged_infer))
         for probe, metric in zip(manifest["probes"], (0.1, 0.3, 0.2)):
             status = Path(probe["results_dir"]) / "train" / "status.json"
             status.parent.mkdir(parents=True)

@@ -32,6 +32,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--classmap", required=True)
     parser.add_argument("--base-checkpoint", required=True)
     parser.add_argument("--output-dir", required=True)
+    parser.add_argument(
+        "--published-output-dir",
+        help="Durable spec identity when output-dir is node-local staging.",
+    )
     parser.add_argument("--results-root", required=True)
     parser.add_argument("--incumbent-config", default=None)
     parser.add_argument("--history", default=None)
@@ -93,7 +97,7 @@ def dump_json(path: Path, value: Any) -> None:
 
 
 def write_binary_inference_classmap(
-    source: str, output: Path, class_name: str
+    source: str, output: Path, published_output: Path, class_name: str
 ) -> str:
     lines = [
         line.strip()
@@ -113,7 +117,7 @@ def write_binary_inference_classmap(
     temporary = path.with_suffix(path.suffix + ".tmp")
     temporary.write_text("\n".join(normalized) + "\n", encoding="utf-8")
     os.replace(temporary, path)
-    return str(path)
+    return str(published_output / path.name)
 
 
 def base_train_spec(
@@ -230,8 +234,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     output = Path(args.output_dir).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
+    published_output = Path(
+        os.path.abspath(
+            os.path.expanduser(getattr(args, "published_output_dir", None) or str(output))
+        )
+    )
     classmap = write_binary_inference_classmap(
-        classmap_source, output, policy["task"]["class_name"]
+        classmap_source, output, published_output, policy["task"]["class_name"]
     )
     results = Path(args.results_root).expanduser().resolve()
     train_spec = base_train_spec(

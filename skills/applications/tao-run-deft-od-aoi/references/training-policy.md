@@ -268,6 +268,26 @@ downstream reuse even though inference can start successfully.
   `/portfolios/...` to `/projects/...`.
 - Gate all four manifest paths against the exact published directory and reject
   every `/raid/scratch` string before copy-back.
+
+### Initial inference spec contains a node-local classmap path
+
+This occurs when `write_rtdetr_specs.py` writes a normalized
+`inference_classmap.txt` into node-local staging and also publishes that staging
+path inside `kpi_infer.yaml` or `test_infer.yaml`. Training may still succeed,
+but later measurement relocation cannot reproduce the spec after scratch is
+cleaned.
+
+- On staged platforms, pass separate `--output-dir <node-local-staging>` and
+  `--published-output-dir <durable-spec-directory>` arguments when generating
+  the initial spec bundle.
+- Copy the complete allowlisted bundle, including `inference_classmap.txt`, to
+  that exact published directory. Preserve the caller's durable alias rather
+  than resolving it to a different site alias.
+- Before selected-checkpoint preparation, reject `/raid/scratch` in both
+  initial inference YAMLs and require their classmap files to exist.
+- If detected after training, regenerate the deterministic initial spec bundle
+  with the frozen policy and inputs, then retry measurement preparation. Do not
+  rerun training and do not consume the one-time frozen-test evaluation.
 - A backend `COMPLETED` state does not override this artifact failure. Mark the
   prep record `ERR_PROGRAM`, correct only the manifest-preparation step, and
   retain already-running measurements when their YAML inputs independently

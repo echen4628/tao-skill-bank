@@ -163,7 +163,10 @@ single previous-state handoff is the normal interface.
 
 ## 6. Probe, train, and select
 
-Use `scripts/write_rtdetr_specs.py` to emit nested main and inference specs.
+Use `scripts/write_rtdetr_specs.py` to emit nested main and inference specs. On
+a staged platform, pass the node-local directory as `--output-dir` and the
+durable spec identity as `--published-output-dir`; the inference classmap path
+must refer to the durable copied bundle and contain no node-local prefix.
 On clusters with known DataLoader shared-memory instability, pass
 `--training-workers 0`; the emitted manifest records the effective training and
 inference worker counts. See the RT-DETR
