@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import argparse
 import json
 import subprocess
 import sys
@@ -16,11 +15,10 @@ import pandas as pd
 import yaml
 
 SCRIPTS = Path(__file__).resolve().parents[1]
+BANK_ROOT = Path(__file__).resolve().parents[5]
 sys.path.insert(0, str(SCRIPTS))
 
 from audit_deft_run import audit  # noqa: E402
-from project_coco_classes import project  # noqa: E402
-from stage_mined_coco import stage  # noqa: E402
 
 
 class RtdetrTrainingBoundaryTests(unittest.TestCase):
@@ -43,56 +41,30 @@ class RtdetrTrainingBoundaryTests(unittest.TestCase):
             ],
         }
 
-    def test_aoi_projection_preserves_per_box_provenance(self) -> None:
-        projected, sidecar = project(self.coco(), "line7-v3", 1, "defect")
-        self.assertEqual(projected["categories"], [{"id": 1, "name": "defect", "supercategory": "defect"}])
-        self.assertEqual([row["category_id"] for row in projected["annotations"]], [1, 1])
-        self.assertEqual(projected["annotations"][0]["severity"], 4)
-        self.assertEqual(projected["annotations"][0]["deft"]["defect_type"], "scratch")
-        self.assertEqual(projected["annotations"][1]["deft"]["defect_type"], "deep_dent")
-        self.assertEqual(sidecar[0]["original_category_name"], "scratch")
-        self.assertNotEqual(sidecar[0]["annotation_uid"], sidecar[1]["annotation_uid"])
-
-    def test_aoi_cli_emits_kpi_aliases_for_original_ground_truth(self) -> None:
-        source = self.root / "source.json"
-        source.write_text(json.dumps(self.coco()), encoding="utf-8")
-        mapping = self.root / "mapping.yaml"
-        command = [
-            sys.executable, str(SCRIPTS / "project_coco_classes.py"),
-            "--input-coco", str(source),
-            "--output-coco", str(self.root / "projected.json"),
-            "--metadata-jsonl", str(self.root / "metadata.jsonl"),
-            "--classmap-out", str(self.root / "classmap.txt"),
-            "--kpi-mapping-out", str(mapping),
-        ]
-        completed = subprocess.run(command, text=True, capture_output=True, check=False)
-        self.assertEqual(completed.returncode, 0, completed.stderr)
+    def test_data_services_leaf_owns_projection_and_staging(self) -> None:
+        leaf = BANK_ROOT / "skills" / "data" / "tao-prepare-od-coco"
+        contract = yaml.safe_load((leaf / "references" / "skill_info.yaml").read_text())
         self.assertEqual(
-            yaml.safe_load(mapping.read_text()),
-            [{"defect": ["defect", "scratch", "dent"]}],
+            contract["actions"]["project"]["command"],
+            "annotations project -e {config_path}",
         )
+        self.assertEqual(
+            contract["actions"]["stage"]["command"],
+            "annotations stage -e {config_path}",
+        )
+        self.assertEqual(
+            set(contract["actions"]["stage"]["inputs"]),
+            {"data.source_coco", "data.selection_manifest"},
+        )
+        self.assertFalse((SCRIPTS / "project_coco_classes.py").exists())
+        self.assertFalse((SCRIPTS / "stage_mined_coco.py").exists())
 
-    def test_stage_coco_preserves_categories_and_custom_metadata(self) -> None:
-        image = self.root / "a.jpg"
-        image.write_bytes(b"jpeg")
-        source = self.root / "source.json"
-        source.write_text(json.dumps(self.coco()), encoding="utf-8")
-        mined = self.root / "mined.parquet"
-        pd.DataFrame({"filepath": [str(image)]}).to_parquet(mined)
-        args = argparse.Namespace(
-            mined_parquet=str(mined),
-            source_coco=str(source),
-            output_images_dir=str(self.root / "images"),
-            output_coco=str(self.root / "staged.json"),
-            output_classmap=str(self.root / "classmap.txt"),
-            report_json=None,
-            min_success_rate=0.0,
-        )
-        report = stage(args)
-        staged = json.loads((self.root / "staged.json").read_text())
-        self.assertEqual(report["class_names"], ["scratch", "dent"])
-        self.assertEqual(staged["annotations"][0]["severity"], 4)
-        self.assertEqual((self.root / "classmap.txt").read_text(), "scratch\ndent\n")
+    def test_rtdetr_overlay_uses_nested_data_services_stage_spec(self) -> None:
+        reference = (SCRIPTS.parent / "references" / "rtdetr.md").read_text()
+        self.assertIn("tao-skill-bank:tao-prepare-od-coco", reference)
+        self.assertIn("annotations stage -e <spec>", reference)
+        self.assertIn("annotation_filename: tmm_coco.json", reference)
+        self.assertNotIn("stage_mined_coco.py", reference)
 
     def test_prepare_spec_sets_rtdetr_class_contract(self) -> None:
         image_dir = self.root / "images"

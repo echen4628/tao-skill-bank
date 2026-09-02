@@ -163,7 +163,8 @@ If an *overlay* is missing, stop and ask the user to reinstall the plugin — th
 | `gap_analysis` | `references/tao-analyze-gaps-od-map.md` | `tao-skill-bank:tao-analyze-gaps-od-map` |
 | `embed` | `references/tao-generate-image-embeddings.md` | `tao-skill-bank:tao-generate-image-embeddings` |
 | `mine` | `references/tao-mine-od-images.md` | `tao-skill-bank:tao-mine-od-images` |
-| `stage` | `references/stage-mined-data.md` | *(bundled glue — no leaf skill)* |
+| `stage` | `references/stage-mined-data.md` | bundled ODVG glue; RT-DETR also invokes `tao-skill-bank:tao-prepare-od-coco` |
+| optional AOI projection | `references/aoi-class-projection.md` | `tao-skill-bank:tao-prepare-od-coco` |
 | `train`, `inference` (`grounding_dino`) | `references/grounding-dino.md` | `tao-skill-bank:tao-train-grounding-dino` |
 | `train`, `inference` (`rtdetr`) | `references/rtdetr.md` | `tao-skill-bank:tao-train-rtdetr` |
 | `kpi_analyze` | `references/tao-analyze-detection-kpi.md` | `tao-skill-bank:tao-analyze-detection-kpi` |

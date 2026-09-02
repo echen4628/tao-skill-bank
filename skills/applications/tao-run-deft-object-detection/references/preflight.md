@@ -68,7 +68,7 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    | Env var | versions-key | Used by |
    |---|---|---|
    | `TAO_PYT_IMAGE` | `images.tao_toolkit.pyt` | `train`, `inference` |
-   | `TAO_DS_IMAGE` | `images.tao_toolkit.data_services_nightly` | `gap_analysis`, `embed`, `mine`, `kpi_analyze` |
+   | `TAO_DS_IMAGE` | `images.tao_toolkit.data_services_nightly` | optional AOI projection, RT-DETR COCO staging, `gap_analysis`, `embed`, `mine`, `kpi_analyze` |
 
    The data-services key is `data_services_nightly`, not `data_services`: the release
    data-services image carries neither `gap_analysis object_detection` nor
@@ -79,6 +79,12 @@ Resolve everything you can before asking the user. Parameter precedence is stric
    it, so a bump lands in one file and no document can drift from it.
 
 5. **Image presence.** `docker image inspect "$TAO_PYT_IMAGE" "$TAO_DS_IMAGE"`. Record anything missing as `WILL_PULL_AFTER_APPROVAL`; do not pull before the gate.
+
+   For `detector=rtdetr`, also record `annotations project/stage capability` as
+   `VERIFY_AFTER_APPROVAL`. Immediately after approval and any required pull,
+   but before AOI projection or `init_deft_state.py`, run the capability gate in
+   `tao-skill-bank:tao-prepare-od-coco`. Hard-stop if either Data Services action
+   is absent; do not substitute the removed host-side projection/staging scripts.
 
 6. **Baseline checkpoint.** The baseline
    scores this checkpoint without training and every iteration fine-tunes from it.

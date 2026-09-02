@@ -1,0 +1,32 @@
+network_arch: tao-prepare-od-coco
+type: data
+container_image: nvcr.io/nvstaging/tao/tao-toolkit-ds:2026.8.10-rc-26-multiarch  # versions-key: images.tao_toolkit.data_services_nightly
+gpu_spec_key: null
+required_credentials: []
+actions:
+  project:
+    command: annotations project -e {config_path}
+    config_format: yaml
+    mode: config
+    inputs:
+      data.annotation_file:
+        type: file
+    outputs:
+      results_dir:
+        type: directory
+    upload_excludes:
+    - inputs/
+  stage:
+    command: annotations stage -e {config_path}
+    config_format: yaml
+    mode: config
+    inputs:
+      data.source_coco:
+        type: file
+      data.selection_manifest:
+        type: file
+    outputs:
+      results_dir:
+        type: directory
+    upload_excludes:
+    - inputs/

@@ -1,0 +1,11 @@
+data:
+  source_coco: ???
+  selection_manifest: ???
+  filepath_column: null
+output:
+  images_dirname: images
+  annotation_filename: annotations.json
+  classmap_filename: classmap.txt
+  report_filename: staging_report.json
+min_success_rate: 0.0
+results_dir: ???

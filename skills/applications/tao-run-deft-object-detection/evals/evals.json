@@ -19,14 +19,14 @@
     "question": "Reading only the tao-run-deft-object-detection skill documentation, which underlying TAO skills does each of its iteration stages invoke, and which stages are bundled glue rather than a skill? Do NOT run any commands, scripts, or web searches.",
     "expected_skill": "tao-run-deft-object-detection",
     "expected_script": null,
-    "ground_truth": "gap_analysis uses tao-analyze-gaps-od-map; embed uses tao-generate-image-embeddings; mine uses tao-mine-od-images; train and inference use tao-train-grounding-dino or tao-train-rtdetr according to the selected detector; kpi_analyze uses tao-analyze-detection-kpi. The stage step is bundled glue with no leaf skill.",
+    "ground_truth": "gap_analysis uses tao-analyze-gaps-od-map; embed uses tao-generate-image-embeddings; mine uses tao-mine-od-images; train and inference use tao-train-grounding-dino or tao-train-rtdetr according to the selected detector; kpi_analyze uses tao-analyze-detection-kpi. Stage always uses bundled ODVG glue and, for RT-DETR, also uses tao-prepare-od-coco for the Data Services COCO view.",
     "expected_behavior": [
       "Maps gap_analysis to tao-analyze-gaps-od-map",
       "Maps embed to tao-generate-image-embeddings",
       "Maps mine to tao-mine-od-images",
       "Maps train and inference to tao-train-grounding-dino for Grounding DINO and tao-train-rtdetr for RT-DETR",
       "Maps kpi_analyze to tao-analyze-detection-kpi",
-      "Identifies the stage step as bundled glue with no underlying skill",
+      "Identifies stage as bundled ODVG glue and maps RT-DETR COCO staging to tao-prepare-od-coco",
       "Does not run commands, scripts, or web searches"
     ]
   },
@@ -67,10 +67,11 @@
     "id": "tao-run-deft-object-detection-rtdetr-aoi-boundary",
     "question": "Plan a DEFT OD run using RT-DETR on an AOI dataset whose raw COCO labels are scratch, dent, and stain, but whose detector should predict one class named defect. Explain what changes and what stays shared. Do not launch anything.",
     "expected_skill": "tao-run-deft-object-detection",
-    "expected_script": "scripts/project_coco_classes.py",
-    "ground_truth": "Select detector=rtdetr, optionally project the raw COCO categories to defect before init while preserving original per-box defect type metadata and a sidecar, freeze the resulting COCO/classmap contract, then use RT-DETR COCO staging/training/inference with the original gap, SigLIP mining, KPI, stage order, and commit machinery.",
+    "expected_script": null,
+    "ground_truth": "Select detector=rtdetr, use tao-prepare-od-coco's Data Services project action to optionally project the raw COCO categories to defect before init while preserving original per-box defect type metadata and a sidecar, freeze the resulting COCO/classmap contract, then use its stage action for RT-DETR COCO staging and tao-train-rtdetr for training/inference with the original gap, SigLIP mining, KPI, stage order, and commit machinery.",
     "expected_behavior": [
       "Treats AOI class collapse as optional input projection rather than a separate workflow profile",
+      "Routes projection and RT-DETR COCO staging through tao-prepare-od-coco rather than bundled host scripts",
       "Preserves original category id/name and defect_type per annotation plus a metadata sidecar",
       "Requires a one-class-compatible RT-DETR checkpoint and spec",
       "Uses COCO for RT-DETR training and a frozen newline inference classmap",

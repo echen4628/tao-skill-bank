@@ -22,19 +22,32 @@ formerly multiclass. The projection does matter to checkpoint head compatibility
 inference class order, KPI mapping, and later per-defect diagnostics, so it must be
 performed before the class contract is frozen.
 
-```bash
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/project_coco_classes.py \
-  --input-coco /abs/raw_multiclass.json \
-  --output-coco /abs/aoi_binary.json \
-  --metadata-jsonl /abs/aoi_annotation_metadata.jsonl \
-  --classmap-out /abs/aoi_classmap.txt \
-  --kpi-mapping-out /abs/aoi_kpi_mapping.yaml \
-  --source-tag '<stable dataset/version id>'
+Read `tao-skill-bank:tao-prepare-od-coco`, write its `project` config under
+the planned run directory, and invoke the Data Services action after the user
+approves Pre-Flight but before `init_deft_state.py`:
+
+```yaml
+data:
+  annotation_file: /abs/raw_multiclass.json
+projection:
+  target_id: 1
+  target_name: defect
+  source_tag: <stable dataset/version id>
+output:
+  annotation_filename: aoi_binary.json
+  metadata_filename: aoi_annotation_metadata.jsonl
+  classmap_filename: aoi_classmap.txt
+  kpi_mapping_filename: aoi_kpi_mapping.yaml
+results_dir: <RESULTS_DIR>/intake
 ```
 
-Then start the ordinary RT-DETR route with `target_classes=defect`, the projected
-COCO as `source_detection_file`, the emitted classmap/KPI mapping, and a
-one-class-compatible checkpoint/spec.
+Run `annotations project -e <spec>` through the selected platform's four-verb
+contract. Do not fall back to the former bundled host script; Data Services is
+the owner of this transformation.
+
+Then initialize the ordinary RT-DETR route with `target_classes=defect`,
+`<RESULTS_DIR>/intake/aoi_binary.json` as `source_detection_file`, the emitted
+classmap/KPI mapping, and a one-class-compatible checkpoint/spec.
 
 The emitted KPI mapping groups `defect` predictions with every original COCO
 category name. Therefore KITTI ground truth may retain labels such as `scratch`

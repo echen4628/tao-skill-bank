@@ -58,24 +58,34 @@ Commit `${RESULTS_DIR}/<phase>/inference/labels` with the existing
 ## Stage the mined COCO source
 
 The original ODVG stage still runs because the unchanged mining pipeline uses
-that prepared pool. For RT-DETR, stage a COCO view in the same stage directory:
+that prepared pool. For RT-DETR, read `tao-skill-bank:tao-prepare-od-coco`
+and invoke its Data Services `stage` action with this nested spec:
 
-```bash
-<skill_root>/scripts/deft_python.sh <skill_root>/scripts/stage_mined_coco.py \
-  --mined-parquet "${RESULTS_DIR}/iter${N}/mining/final_unique_files.parquet" \
-  --source-coco "<config.source_detection_file>" \
-  --output-images-dir "${RESULTS_DIR}/iter${N}/tmm/images" \
-  --output-coco "${RESULTS_DIR}/iter${N}/tmm/annotations/tmm_coco.json" \
-  --output-classmap "${RESULTS_DIR}/iter${N}/tmm/annotations/rtdetr_classmap.txt" \
-  --report-json "${RESULTS_DIR}/iter${N}/tmm/rtdetr_staging_report.json" \
-  --min-success-rate 0.9
+```yaml
+data:
+  source_coco: <config.source_detection_file>
+  selection_manifest: <RESULTS_DIR>/iter<N>/mining/final_unique_files.parquet
+  filepath_column: null
+output:
+  images_dirname: images
+  annotation_filename: tmm_coco.json
+  classmap_filename: rtdetr_classmap.txt
+  report_filename: rtdetr_staging_report.json
+min_success_rate: 0.9
+results_dir: <RESULTS_DIR>/iter<N>/tmm
 ```
+
+Write the spec under `${RESULTS_DIR}/iter${N}/specs/`, then run
+`annotations stage -e <spec>` through the selected platform's four-verb
+contract. Do not reimplement the transformation in host Python. The action
+reuses `${RESULTS_DIR}/iter${N}/tmm/images`, preserves custom COCO metadata,
+and must report the same category ids/names frozen in `deft_state.json`.
 
 Add these verified artifacts to the normal stage commit:
 
 ```bash
---staged-coco "${RESULTS_DIR}/iter${N}/tmm/annotations/tmm_coco.json" \
---inference-classmap "${RESULTS_DIR}/iter${N}/tmm/annotations/rtdetr_classmap.txt"
+--staged-coco "${RESULTS_DIR}/iter${N}/tmm/tmm_coco.json" \
+--inference-classmap "${RESULTS_DIR}/iter${N}/tmm/rtdetr_classmap.txt"
 ```
 
 ## Iteration training
@@ -96,7 +106,7 @@ Then extend the previous RT-DETR spec:
   --previous-spec "<template for iter1; previous iteration spec after that>" \
   --output-spec "${RESULTS_DIR}/iter${N}/train_rtdetr.yaml" \
   --tmm-image-dir "${RESULTS_DIR}/iter${N}/tmm/images" \
-  --tmm-coco-file "${RESULTS_DIR}/iter${N}/tmm/annotations/tmm_coco.json" \
+  --tmm-coco-file "${RESULTS_DIR}/iter${N}/tmm/tmm_coco.json" \
   --val-image-dir "<source-pool image directory>" \
   --val-json-file "${RESULTS_DIR}/val_rtdetr_coco.json" \
   --pretrained-model-path "<config.zero_shot_checkpoint>" \

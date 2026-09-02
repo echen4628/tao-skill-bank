@@ -1,0 +1,31 @@
+[
+  {
+    "id": "tao-prepare-od-coco-project",
+    "question": "Use tao-prepare-od-coco to collapse scratch, dent, and stain COCO labels to one defect class while retaining diagnostic identity. Describe the plan only; do not run anything.",
+    "expected_skill": "tao-prepare-od-coco",
+    "expected_script": null,
+    "ground_truth": "Use the TAO Data Services annotations project action with a nested YAML spec. It writes projected COCO, per-box metadata sidecar, detector classmap, and KPI alias mapping without reimplementing projection on the host.",
+    "expected_behavior": [
+      "Selects the project action rather than model training or gap analysis",
+      "Uses annotations project with a YAML spec",
+      "Preserves original category and defect type per annotation and in a sidecar",
+      "Names projected_coco.json, annotation_metadata.jsonl, classmap.txt, and kpi_mapping.yaml",
+      "Does not run commands or mutate files"
+    ]
+  },
+  {
+    "id": "tao-prepare-od-coco-stage",
+    "question": "Use tao-prepare-od-coco to materialize a mined parquet of image paths as an RT-DETR COCO training source. Describe the plan only; do not run anything.",
+    "expected_skill": "tao-prepare-od-coco",
+    "expected_script": null,
+    "ground_truth": "Use the TAO Data Services annotations stage action with source COCO, selected-path manifest, output directory, and a success-rate gate; consume the emitted images, annotations, classmap, and report.",
+    "expected_behavior": [
+      "Selects the stage action",
+      "Uses annotations stage with a YAML spec",
+      "Requires a source COCO and selection manifest",
+      "Retains category order and custom annotation metadata",
+      "Treats duplicate basenames, zero resolved annotations, and insufficient success rate as errors",
+      "Does not run commands or mutate files"
+    ]
+  }
+]

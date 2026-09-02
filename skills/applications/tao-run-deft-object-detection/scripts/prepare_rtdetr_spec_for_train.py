@@ -15,8 +15,6 @@ from typing import Any
 
 import yaml
 
-from stage_mined_coco import category_contract
-
 
 def _load_yaml(path: Path) -> dict[str, Any]:
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
@@ -39,7 +37,26 @@ def _absolute_existing(raw: str, kind: str) -> str:
 
 def _contract(coco_path: Path) -> tuple[list[int], list[str]]:
     coco = json.loads(coco_path.read_text(encoding="utf-8"))
-    _categories, ids, names = category_contract(coco)
+    categories = coco.get("categories")
+    if not isinstance(categories, list) or not categories:
+        raise ValueError(f"COCO data has no categories: {coco_path}")
+    if not all(isinstance(row, dict) for row in categories):
+        raise ValueError(f"every COCO category must be an object: {coco_path}")
+    ordered = sorted(categories, key=lambda row: row.get("id"))
+    ids = [row.get("id") for row in ordered]
+    names = [str(row.get("name", "")).strip() for row in ordered]
+    if any(isinstance(value, bool) or not isinstance(value, int) for value in ids):
+        raise ValueError(f"COCO category ids must be integers: {coco_path}")
+    if ids not in (list(range(len(ids))), list(range(1, len(ids) + 1))):
+        raise ValueError(
+            f"RT-DETR requires dense category ids 0..N-1 or 1..N; got {ids}"
+        )
+    if len(names) != len(set(names)) or any(
+        not name or "\n" in name or "\r" in name for name in names
+    ):
+        raise ValueError(
+            f"COCO category names must be non-empty, single-line, and unique: {coco_path}"
+        )
     return ids, names
 
 

@@ -72,7 +72,7 @@ This loop legitimately uses three annotation representations. They are not inter
 |---|---|---|
 | **KITTI** `.txt` | `kpi/labels/`, and everything TAO inference writes to `inference/labels/` | `gap_analysis` (`input_format: kitti`, lowercase) and `kpi_analyze` (`input_format: KITTI`, uppercase) |
 | **ODVG** `.jsonl` + `labelmap.json` | `source_pool/odvg/`, and the staged `iter${N}/tmm/annotations/` | Grounding DINO **training** |
-| **COCO** `.json` | `source_pool/coco.json` (prep-generated), `kpi/coco.json` (yours) | `class_stratified` mining only (`detection_format: coco`) |
+| **COCO** `.json` | `source_pool/coco.json` (prep-generated), `kpi/coco.json` (yours), and RT-DETR's staged `iter${N}/tmm/tmm_coco.json` | `class_stratified` mining and RT-DETR training |
 
 ### KITTI inference line
 

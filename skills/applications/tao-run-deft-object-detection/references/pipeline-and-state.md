@@ -19,7 +19,11 @@ has to remember and it leaves a window where the artifacts on disk are unreadabl
 
 ## Pipeline
 
-All stages run inline in the parent context. For SKILL stages, read the matching `references/*.md` overlay first, then invoke the underlying `tao-skill-bank:*` skill. GLUE stages run a bundled script; there is no leaf skill.
+All stages run inline in the parent context. For SKILL stages, read the matching
+`references/*.md` overlay first, then invoke the underlying `tao-skill-bank:*`
+skill. GLUE steps run bundled scripts. The `stage` phase is mixed: ODVG staging
+is glue, while RT-DETR COCO staging is the Data Services-backed
+`tao-prepare-od-coco` leaf skill.
 
 ### Prep (`prep`) — once, before baseline
 
@@ -245,7 +249,10 @@ results/run_<YYYYMMDD_HHMMSS>/
     ├── mining/                        # final_unique_files.parquet, summary.json
     ├── tmm/
     │   ├── images/                    # staged mined images
-    │   └── annotations/               # tmm_odvg.jsonl, labelmap.json
+    │   ├── annotations/               # tmm_odvg.jsonl, labelmap.json
+    │   ├── tmm_coco.json              # RT-DETR only; Data Services stage output
+    │   ├── rtdetr_classmap.txt        # RT-DETR only; frozen class order
+    │   └── rtdetr_staging_report.json # RT-DETR only
     ├── mined_cumulative.parquet       # exclude set for the next iteration
     ├── train_grounding_dino.yaml      # prev spec + one appended ODVG source
     ├── train/                         # gdino_model_latest.pth, status.json

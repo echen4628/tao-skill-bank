@@ -1,9 +1,10 @@
-# DEFT OD — Staging Stage Overlay (bundled glue)
+# DEFT OD — Staging Stage Overlay
 
-This stage has no leaf skill. It turns the miner's flat list of filepaths into
-the selected detector's trainable source, validates it, and extends the exclude
-set for the next iteration. The original ODVG view is always staged; RT-DETR
-also stages a COCO view from the same selected images.
+This stage turns the miner's flat list of filepaths into the selected detector's
+trainable source, validates it, and extends the exclude set for the next
+iteration. The original ODVG view remains bundled glue; RT-DETR additionally
+invokes `tao-skill-bank:tao-prepare-od-coco` so Data Services owns the COCO
+transformation.
 
 ## Why this is glue and not a skill
 
@@ -42,12 +43,14 @@ Hard-fails when an ODVG record references an image missing on disk, when the fil
 
 This is a hard-stop gate. Do not train on a source that fails validation.
 
-### RT-DETR additional COCO view
+### RT-DETR additional Data Services COCO view
 
-When `config.detector=rtdetr`, also run the `stage_mined_coco.py` command in
-`references/rtdetr.md`. It preserves the frozen category ids and any custom
-annotation metadata, and emits `tmm_coco.json` plus an inference classmap. Its
-classmap must exactly match `config.rtdetr_class_names`.
+When `config.detector=rtdetr`, read `references/rtdetr.md` and invoke the
+`tao-prepare-od-coco` `stage` action. It preserves the frozen category ids and
+custom annotation metadata, and emits `tmm/tmm_coco.json`,
+`tmm/rtdetr_classmap.txt`, and `tmm/rtdetr_staging_report.json`. Its report and
+classmap must exactly match `config.rtdetr_category_ids` and
+`config.rtdetr_class_names`.
 
 ## Step 3 — Extend the exclude set
 
@@ -114,6 +117,6 @@ Point `--weak-parquet` at **iteration 1's** weak-images parquet on every iterati
 For RT-DETR append:
 
 ```bash
---staged-coco "${RESULTS_DIR}/iter${N}/tmm/annotations/tmm_coco.json" \
---inference-classmap "${RESULTS_DIR}/iter${N}/tmm/annotations/rtdetr_classmap.txt"
+--staged-coco "${RESULTS_DIR}/iter${N}/tmm/tmm_coco.json" \
+--inference-classmap "${RESULTS_DIR}/iter${N}/tmm/rtdetr_classmap.txt"
 ```

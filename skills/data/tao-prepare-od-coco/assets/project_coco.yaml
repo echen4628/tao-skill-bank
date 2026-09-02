@@ -1,0 +1,12 @@
+data:
+  annotation_file: ???
+projection:
+  target_id: 1
+  target_name: defect
+  source_tag: null
+output:
+  annotation_filename: projected_coco.json
+  metadata_filename: annotation_metadata.jsonl
+  classmap_filename: classmap.txt
+  kpi_mapping_filename: kpi_mapping.yaml
+results_dir: ???

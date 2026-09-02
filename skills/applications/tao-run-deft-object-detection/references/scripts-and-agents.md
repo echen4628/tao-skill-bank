@@ -60,13 +60,11 @@ must be derived from the run's classes, never pinned.
 | `validate_pool_coco.py` | `prep` | Verify the converted pool: every target class carries annotations, case-only class mismatches are named, unmapped source classes are reported with counts, and image/annotation counts reconcile. Both TAO consumers drop unmatched names silently, so this is where a broken fold surfaces. |
 | `prepare_budget_for_mining.py` | before `mine` | `desired_unique_count` = weak-image count × multiplier, with optional floor/ceiling. Point `--weak-parquet` at **iteration 1's** parquet on every iteration to hold the budget constant. Writes only the number to stdout. |
 | `stage_mined_odvg.py` | `stage` | Copy mined images, look up ODVG records by basename, renumber `image_id`, remap labels, write `tmm_odvg.jsonl` + `labelmap.json`. **Truncates** the JSONL, so re-running is idempotent. |
-| `stage_mined_coco.py` | `stage` | Stage the same mined images as RT-DETR COCO while preserving category ids and custom annotation metadata; emit the frozen-order classmap. |
 | `validate_odvg_images.py` | `stage` | Hard-fail when an ODVG record references a missing image, when there are no usable records, or when records are duplicated. `--prune` deletes orphan images. Stdlib only. |
 | `prepare_exclude_for_mining.py` | `stage` | Merge this iteration's mined set with the previous cumulative and de-duplicate. `--parquet-b` is optional at iteration 1 only; pass `--iteration N` so a missing previous cumulative is an error after that, rather than silently re-mining trained images. |
 | `prepare_spec_for_train.py` | `train` | Copy the previous spec, append one `{image_dir, json_file, label_map}` entry to `dataset.train_data_sources`, set `train.num_epochs` and `train.optim.lr`. Lowers `checkpoint_interval` / `validation_interval` when they exceed the epoch count, and will not double-add a source already present. |
 | `prepare_rtdetr_spec_for_train.py` | `train` | Append one COCO source, verify train/val category contracts, and set RT-DETR `num_classes`, `eval_class_ids`, validation, checkpoint, epochs, LR, and GPUs. |
 | `resolve_rtdetr_checkpoint.py` | `train` | Select the newest non-empty `model_epoch_<N>.pth` (or `-EMA` when requested). |
-| `project_coco_classes.py` | optional intake | Project multiclass COCO to one detector class while retaining per-box original class/`defect_type` metadata in COCO and a JSONL sidecar. |
 
 ### Script invocation
 
@@ -115,7 +113,8 @@ Never render the report inline in the parent — the agent exists so an end-of-l
 | `gap_analysis` | `references/tao-analyze-gaps-od-map.md` | `tao-skill-bank:tao-analyze-gaps-od-map` |
 | `embed` | `references/tao-generate-image-embeddings.md` | `tao-skill-bank:tao-generate-image-embeddings` |
 | `mine` | `references/tao-mine-od-images.md` | `tao-skill-bank:tao-mine-od-images` |
-| `stage` | `references/stage-mined-data.md` | *(bundled glue)* |
+| `stage` | `references/stage-mined-data.md` | bundled ODVG glue; RT-DETR additionally uses `tao-skill-bank:tao-prepare-od-coco` |
+| optional AOI projection | `references/aoi-class-projection.md` | `tao-skill-bank:tao-prepare-od-coco` |
 | `train`, `inference` | detector-selected `references/grounding-dino.md` or `references/rtdetr.md` | matching TAO model skill |
 | `kpi_analyze` | `references/tao-analyze-detection-kpi.md` | `tao-skill-bank:tao-analyze-detection-kpi` |
 
