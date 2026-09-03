@@ -56,11 +56,22 @@ Resolve absolute paths for:
 - when synthesis is enabled: the mining-pool pixel-mask directory (or an
   equivalent same-type mask pool), `defect_spec.jsonl`, a task-fine-tuned
   AnomalyGenNext checkpoint plus matching recipe for each dataset route, the
-  Cosmos3-Nano base checkpoint, and the AnomalyGenNext checkout. Resolve
-  absolute paths and stop if any are missing;
+  Cosmos3-Nano base checkpoint, and the AnomalyGenNext 1.1 container resolved
+  from `tao-generate-od-defects/references/skill_info.yaml`. Resolve absolute
+  paths and stop if any are missing;
 - one resolvable SigLIP encoder (`google/siglip-base-patch16-224` by default)
   and one data-services container image used identically for candidate and
   query embeddings.
+
+For synthesis, the currently resolved generation image is
+`nvcr.io/nvidia/paidf-anomalygen:1.1.0`.
+Treat the leaf skill's `container_image` field as authoritative and show its
+resolved value in the launch review. Do not substitute
+`nvcr.io/nvidia/paidf-anomalygen:1.0.1`; <!-- versions-key: images.metropolis_sdg.paidf_anomalygen --> that image is the older
+Cosmos-Predict2 release and is incompatible with the Cosmos3-Nano task weights.
+Read the leaf skill's `references/container-runtime.md` only when Docker is the
+selected platform. The DEFT application does not duplicate its Docker command
+or require a separate AnomalyGenNext checkout.
 
 For path-based intake, inventory every path without changing it:
 
@@ -142,7 +153,8 @@ Present one review containing:
 - when synthesis is enabled: proof the mining-pool defects have pixel masks,
   the mask-pool path, the frozen generator-type list, `defect_spec` path,
   per-route AnomalyGenNext checkpoint/recipe pairs, Cosmos3-Nano base
-  checkpoint, and AnomalyGenNext checkout;
+  checkpoint, the resolved AnomalyGenNext 1.1 image, and any registry credential
+  variable names needed to import it;
 - KPI selection role and test report-only role;
 - result root, estimated GPU jobs, and credential variable names only.
 

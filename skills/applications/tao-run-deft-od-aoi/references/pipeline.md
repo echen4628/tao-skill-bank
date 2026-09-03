@@ -115,13 +115,18 @@ route stage is committed.
 When `synthetic_plan.json` is non-empty, invoke these leaf skills in order
 using the AnomalyGenNext assets frozen at launch review (`defect_spec`,
 per-route fine-tuned checkpoint and recipe, Cosmos3-Nano base checkpoint, and
-AnomalyGenNext checkout). Do not invent types or checkpoints mid-loop.
+the AnomalyGenNext 1.1 container resolved by `tao-generate-od-defects`). Do not
+invent types, checkpoints, or image tags mid-loop.
 
 1. `tao-prepare-anomalygennext-inputs` for box-level strict-FN queries,
    pair-preserving clean retrieval, masks, and frozen testcases;
 2. `tao-generate-image-embeddings` for both preparation specs;
 3. `tao-generate-od-defects` for generation, pseudo-labeling, validation, and
    binary COCO output.
+
+The generation leaf owns the exact image, Docker invocation, mounts, and
+completion gates. The image supplies its own source tree and Python
+environment; DEFT must not add a host checkout or virtualenv requirement.
 
 Use the one `prepare_anomalygennext_inputs.py` entry point for host and SLURM
 handoffs: `materialize-aoi-plan`, `prepare-inputs`, `stage-embedding`,

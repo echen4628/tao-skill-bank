@@ -72,8 +72,10 @@ once in `deft_od_aoi_policy.json`.
   - a task-fine-tuned AnomalyGenNext checkpoint and its matching recipe for
     each dataset route. The recipe must declare the same types as
     `defect_spec` and the frozen generator-type list;
-  - the Cosmos3-Nano base checkpoint and AnomalyGenNext checkout used by
-    `tao-generate-od-defects`.
+  - the Cosmos3-Nano base checkpoint and the AnomalyGenNext 1.1 container
+    resolved from `tao-generate-od-defects/references/skill_info.yaml`. The
+    container supplies the release checkout and Python environment; do not
+    require a host checkout or virtualenv.
 
 ## Defaults — never ask
 

@@ -16,10 +16,10 @@ description: >
   instead for multiclass defects, Grounding DINO, or generic object detection.
   Do not use this skill for one-off training.
 license: Apache-2.0
-compatibility: Requires the TAO skill bank, Python with pandas, pyarrow, numpy, Pillow, and PyYAML, an RT-DETR TAO image, a selected execution platform, labeled binary COCO pools, and an optional configured AnomalyGenNext producer.
+compatibility: Requires the TAO skill bank, Python with pandas, pyarrow, numpy, Pillow, and PyYAML, an RT-DETR TAO image, a selected execution platform, labeled binary COCO pools, and, when synthesis is enabled, the AnomalyGenNext 1.1 container declared by tao-generate-od-defects.
 metadata:
   author: NVIDIA Corporation
-  version: "0.1.0"
+  version: "0.2.0"
 allowed-tools: Read Bash Write
 tags:
 - application
@@ -71,8 +71,12 @@ manifest in `references/source-manifest.md`, then run
 `scripts/prepare_deft_od_aoi_sources.py`.
 When the user wants AnomalyGenNext, ask whether the mining-pool defects have
 per-pixel masks. That is a prerequisite; boxes are not enough. If masks exist,
-also resolve `defect_spec` and the matching fine-tuned checkpoint before the
-launch review. See `references/defaults.md`.
+also resolve `defect_spec`, the matching fine-tuned checkpoint, and the
+AnomalyGenNext 1.1 image from
+`../../data/tao-generate-od-defects/references/skill_info.yaml` before the
+launch review. The image supplies the AnomalyGenNext checkout and Python
+environment; do not require a separate checkout or virtualenv. See
+`references/defaults.md`.
 
 ## Quick Start
 

@@ -17,20 +17,21 @@ Required (flag or same-named environment variable):
 Optional:
   --datasets IDS             Comma-separated frozen dataset ids (GENERATION_DATASETS)
   --num-gpus N               Visible GPUs used by torchrun; default 1 (NUM_GPUS)
-  --anomalygen-repo PATH     AnomalyGenNext checkout (ANOMALYGEN_REPO)
-  --activate PATH            Environment activation script (ANOMALYGEN_ACTIVATE)
-  --python PATH              Python with AnomalyGenNext deps (ANOMALYGEN_PYTHON)
+  --anomalygen-repo PATH     Baked AnomalyGenNext root; default
+                             /workspace/paidf-anomalygen (ANOMALYGEN_REPO)
   --base-checkpoint PATH     Cosmos3-Nano base DCP (BASE_CHECKPOINT)
-  --uv-bin-dir PATH          Directory containing uv (UV_BIN_DIR)
   --pipeline-py PATH         Generation implementation; defaults beside this script (PIPELINE_PY)
   --hf-cache PATH            AnomalyGenNext HF cache (ANOMALYGEN_HF_CACHE)
   --job-id ID                Audit label; defaults to output basename (JOB_ID)
   --resume-existing-generation
                              Reuse completed raw generation and continue eval/labels
+  --activate PATH            Legacy environment activation override (ANOMALYGEN_ACTIVATE)
+  --python PATH              Legacy Python override (ANOMALYGEN_PYTHON)
+  --uv-bin-dir PATH          Legacy directory containing uv (UV_BIN_DIR)
   -h, --help                 Show this help
 
 The script validates every frozen input SHA-256 before generation. Run it
-inside a SLURM allocation with at least --num-gpus visible GPUs.
+inside the resolved container with at least --num-gpus visible GPUs.
 EOF
 }
 
@@ -57,11 +58,11 @@ done
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 RUN_ROOT=${RUN_ROOT:?RUN_ROOT or --output-dir must be set}
 PREPARED_INPUTS_ROOT=${PREPARED_INPUTS_ROOT:?PREPARED_INPUTS_ROOT or --inputs-dir must be set}
-ANOMALYGEN_REPO=${ANOMALYGEN_REPO:?ANOMALYGEN_REPO or --anomalygen-repo must be set}
-ANOMALYGEN_ACTIVATE=${ANOMALYGEN_ACTIVATE:-$ANOMALYGEN_REPO/.venv/bin/activate}
+ANOMALYGEN_REPO=${ANOMALYGEN_REPO:-/workspace/paidf-anomalygen}
+ANOMALYGEN_ACTIVATE=${ANOMALYGEN_ACTIVATE:-}
 PIPELINE_PY=${PIPELINE_PY:-$SCRIPT_DIR/generate_od_defects.py}
 BASE_CHECKPOINT=${BASE_CHECKPOINT:-$ANOMALYGEN_REPO/checkpoints/Cosmos3-Nano/model}
-ANOMALYGEN_HF_CACHE=${ANOMALYGEN_HF_CACHE:-$(dirname "$ANOMALYGEN_REPO")/hf_cache}
+ANOMALYGEN_HF_CACHE=${ANOMALYGEN_HF_CACHE:-${HF_HOME:-$(dirname "$ANOMALYGEN_REPO")/hf_cache}}
 NUM_GPUS=${NUM_GPUS:-1}
 GENERATION_DATASETS=${GENERATION_DATASETS:-}
 JOB_ID=${JOB_ID:-$(basename "$RUN_ROOT")}
@@ -74,8 +75,10 @@ esac
 test -d "$PREPARED_INPUTS_ROOT"
 test -f "$PIPELINE_PY"
 test -d "$ANOMALYGEN_REPO"
-test -f "$ANOMALYGEN_ACTIVATE"
 test -e "$BASE_CHECKPOINT"
+if [ -n "$ANOMALYGEN_ACTIVATE" ]; then
+  test -f "$ANOMALYGEN_ACTIVATE"
+fi
 
 if [ -e "$RUN_ROOT" ]; then
   if [ "$RESUME_EXISTING_GENERATION" -ne 1 ]; then
@@ -103,7 +106,9 @@ write_status() {
 }
 
 mkdir -p "$RUN_ROOT" "$LOG_DIR"
-source "$ANOMALYGEN_ACTIVATE"
+if [ -n "$ANOMALYGEN_ACTIVATE" ]; then
+  source "$ANOMALYGEN_ACTIVATE"
+fi
 ANOMALYGEN_PYTHON=${ANOMALYGEN_PYTHON:-$(command -v python)}
 test -x "$ANOMALYGEN_PYTHON"
 if [ -z "${UV_BIN_DIR:-}" ]; then

@@ -8,10 +8,10 @@ description: >-
   generate OD defects from frozen inputs, create synthetic defect images with COCO labels, or
   validate an AnomalyGenNext object-detection dataset.
 license: Apache-2.0
-compatibility: Requires an AnomalyGenNext Python environment, uv, one or more CUDA GPUs, completed inputs from tao-prepare-anomalygennext-inputs, and an existing fine-tuned AnomalyGenNext checkpoint.
+compatibility: Requires the pinned AnomalyGenNext 1.1 container, one or more CUDA GPUs, completed inputs from tao-prepare-anomalygennext-inputs, a Cosmos3-Nano base checkpoint, and an existing task-fine-tuned AnomalyGenNext checkpoint.
 metadata:
   author: NVIDIA Corporation
-  version: "0.1.0"
+  version: "0.2.0"
 allowed-tools: Read Bash
 tags:
 - tao
@@ -40,17 +40,22 @@ and to its matching recipe. Future full and fine-tune-only workflows belong in
 this generic data-skill layer, not in a DEFT application overlay.
 
 The structured execution metadata is in `references/skill_info.yaml`. This
-action uses an external checkout and virtualenv rather than a bank-owned
-container image. Resolve the concrete AnomalyGenNext interpreter during
-preflight and record that absolute interpreter path as the job `image`.
-Resolve relative `command` and script-default paths against this skill
-directory before staging.
+action runs in the pinned AnomalyGenNext 1.1 container. The image contains the
+release code and Python environment at `/workspace/paidf-anomalygen`; stage only
+the bank wrapper, frozen inputs, task weights, base checkpoints, and outputs.
+Resolve relative `command` and script-default paths against this skill directory
+before staging.
+
+Do not substitute the PAIDF AnomalyGen 1.0.1 image. It is the older
+Cosmos-Predict2 release and is incompatible with Cosmos3-Nano task weights.
+Read `references/container-runtime.md` when pulling the official 1.1 image or
+constructing the Docker invocation.
 
 ## Inputs
 
 - Completed input root containing
   `prepared_anomalygennext_inputs/prepared_inputs_manifest.json`.
-- AnomalyGenNext checkout or shared installation.
+- The container image resolved from `references/skill_info.yaml`.
 - Cosmos3-Nano base checkpoint.
 - A task-fine-tuned AnomalyGenNext checkpoint and matched recipe for each
   dataset route, frozen into the generation plan.
@@ -62,10 +67,21 @@ hash is recomputed before GPU work starts. `defect_spec` is required by the
 preparation skill and is already represented in the frozen testcases; it is not
 a second generation CLI argument.
 
-## Quick Start
+## Docker generation
 
-Run inside the selected platform allocation after its preflight and launch
-review have completed:
+Resolve the exact image instead of guessing a tag:
+
+```bash
+AG_IMAGE=$(
+  "$TAO_SKILL_BANK_PATH/.venv/deft/bin/python" \
+    "$TAO_SKILL_BANK_PATH/scripts/resolve_versions_key.py" \
+    --skill-bank "$TAO_SKILL_BANK_PATH" \
+    images.metropolis_sdg.anomalygen_next
+)
+```
+
+Then run the wrapper inside that image. The image already supplies Python,
+`uv`, and the AnomalyGenNext source tree:
 
 ```bash
 GEN_SKILL=skills/data/tao-generate-od-defects
@@ -73,7 +89,6 @@ GEN_SKILL=skills/data/tao-generate-od-defects
 bash "$GEN_SKILL/scripts/generate_od_defects.sh" \
   --inputs-dir /path/to/completed-inputs \
   --output-dir /path/to/anomalygen_next_generation \
-  --anomalygen-repo /path/to/cosmos3-anomalygen \
   --base-checkpoint /path/to/Cosmos3-Nano/model \
   --num-gpus 1
 ```
@@ -85,25 +100,10 @@ Use `anomalygen_next_generation` as the semantic output-directory name.
 ordinary runs never overwrite another generation.
 
 Read `references/execution-contract.md` for the exact upstream commands and
-output accounting.
-
-For SLURM or another platform that requires node-local execution, use the same
-public Python driver to materialize a selected frozen plan below scratch before
-launching generation:
-
-```bash
-python "$GEN_SKILL/scripts/generate_od_defects.py" stage-runtime \
-  --inputs-dir /durable/prepared-inputs \
-  --runtime-root /raid/scratch/JOB/runtime-inputs \
-  --local-real-root /raid/scratch/JOB/real-pool \
-  --local-checkpoint /raid/scratch/JOB/task/checkpoint.pt \
-  --local-recipe /raid/scratch/JOB/task/recipe.yaml \
-  --datasets plant_a --output-tsv /raid/scratch/JOB/runtime-plan.tsv
-```
-
-This replaces run-local testcase-relocation helpers. It hash-validates the
-frozen input contract, copies only the selected images and masks, and emits the
-exact node-local paths consumed by generation.
+output accounting. Read `references/container-runtime.md` for a complete
+`docker run` example, required mounts, cache locations, private-registry access,
+and the image-version check. Platform-specific staging remains owned by the
+selected platform skill.
 
 ## Workflow
 

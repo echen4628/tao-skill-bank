@@ -1,15 +1,16 @@
 network_arch: tao-generate-od-defects
 type: data
-# AnomalyGenNext is supplied as an external checkout plus virtualenv. There is
-# no bank-owned container image to resolve; record the selected interpreter
-# path as the job image when this action runs through a native platform.
-execution_environment: virtualenv
+container_image: nvcr.io/nvidia/paidf-anomalygen:1.1.0  # versions-key: images.metropolis_sdg.anomalygen_next
+execution_environment: container
 gpu_spec_key: num_gpus
 required_credentials: []
 optional_credentials:
 - name: HF_TOKEN
   source: env_var
   only_when: generation must fetch a missing gated HuggingFace asset
+- name: NGC_KEY
+  source: env_var
+  only_when: the selected platform requires authenticated access to nvcr.io
 actions:
   generate:
     command: scripts/generate_od_defects.sh
@@ -17,19 +18,8 @@ actions:
     inputs:
       prepared_inputs_root:
         type: folder
-      anomalygen_repo:
-        type: folder
       base_checkpoint:
         type: folder
-      anomalygen_activate:
-        type: file
-        optional: true
-      anomalygen_python:
-        type: file
-        optional: true
-      uv_bin_dir:
-        type: folder
-        optional: true
       pipeline_py:
         type: file
         optional: true
@@ -54,11 +44,7 @@ actions:
       output_dir: --output-dir {results_dir}
       datasets: --datasets {datasets}
       num_gpus: --num-gpus {num_gpus}
-      anomalygen_repo: --anomalygen-repo {anomalygen_repo}
-      activate: --activate {anomalygen_activate}
-      python: --python {anomalygen_python}
       base_checkpoint: --base-checkpoint {base_checkpoint}
-      uv_bin_dir: --uv-bin-dir {uv_bin_dir}
       pipeline_py: --pipeline-py {pipeline_py}
       hf_cache: --hf-cache {hf_cache}
       job_id: --job-id {job_id}
