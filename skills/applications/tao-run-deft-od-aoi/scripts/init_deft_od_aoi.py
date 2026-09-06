@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Validate normalized DEFT OD AOI roles and freeze a real-only run contract."""
+"""Validate normalized DEFT OD AOI roles and freeze a detector run contract."""
 
 from __future__ import annotations
 
@@ -95,7 +95,26 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
         raise ValueError("platform must be selected before initialization")
     checkpoint = Path(str(policy.get("base_checkpoint") or "")).expanduser().resolve()
     if not checkpoint.is_file():
-        raise ValueError("base_checkpoint must be a trainable RT-DETR file")
+        raise ValueError("base_checkpoint must be a trainable detector file")
+    model = policy.get("model") or {}
+    backend = str(model.get("backend") or "rtdetr")
+    architecture = str(model.get("architecture") or "")
+    if backend not in {"rtdetr", "yolo"}:
+        raise ValueError("model.backend must be rtdetr or yolo")
+    if backend == "rtdetr" and architecture != "rtdetr":
+        raise ValueError("the RT-DETR backend requires model.architecture: rtdetr")
+    if backend == "yolo" and not architecture.startswith("yolo"):
+        raise ValueError("the YOLO backend requires a YOLO model.architecture")
+    if backend == "yolo":
+        yolo = policy.get("yolo") or {}
+        training = yolo.get("training") or {}
+        evaluation = yolo.get("evaluation") or {}
+        for key in ("num_gpus", "epochs", "patience", "imgsz", "batch_size", "nbs", "stage_workers"):
+            if int(training.get(key, 0)) < 1:
+                raise ValueError(f"yolo.training.{key} must be positive")
+        for key in ("imgsz", "batch_size", "stage_workers", "max_det"):
+            if int(evaluation.get(key, 0)) < 1:
+                raise ValueError(f"yolo.evaluation.{key} must be positive")
     role_reports = {name: _role(name, policy["sources"][name]) for name in ROLES}
     owners: dict[str, str] = {}
     for name, report in role_reports.items():
@@ -142,7 +161,10 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
         for route in policy.get("synthesis", {}).get("routes", {}).values()
     )
     state = {"schema_version": 1, "status": "READY",
-             "mode": "rtdetr_with_synthesis" if synthesis_enabled else "rtdetr_real_only",
+             "mode": f"{backend}_with_synthesis" if synthesis_enabled else f"{backend}_real_only",
+             "detector_backend": backend,
+             "detector_architecture": architecture,
+             "detector_skill": "tao-train-yolo" if backend == "yolo" else "tao-train-rtdetr",
              "synthesis_enabled": synthesis_enabled,
              "synthesis_bootstrap_required": bootstrap_required,
              "current_iteration": 0,

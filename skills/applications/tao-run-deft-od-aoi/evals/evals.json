@@ -11,5 +11,19 @@
       "Keep one frozen RT-DETR base checkpoint and binary defect class"
     ],
     "expected_script": "scripts/init_deft_od_aoi.py"
+  },
+  {
+    "id": "route-binary-deft-od-aoi-yolo",
+    "question": "Run the same iterative binary AOI DEFT loop with a user-supplied YOLO26X initializer. Keep the sealed test report-only and do not launch yet.",
+    "expected_skill": "tao-run-deft-od-aoi",
+    "ground_truth": "Select the YOLO detector backend without changing the disjoint data, retrieval, admission, or synthesis contracts; delegate train/evaluate to tao-train-yolo and skip RT-DETR-only probes, extension, and soup.",
+    "expected_behavior": [
+      "Select tao-run-deft-od-aoi and detector backend yolo",
+      "Resolve YOLO26X through tao-train-yolo",
+      "Keep one frozen YOLO initializer for every iteration",
+      "Run KPI and report-only test as separate evaluate actions",
+      "Require launch and license review before side effects"
+    ],
+    "expected_script": "scripts/write_yolo_specs.py"
   }
 ]

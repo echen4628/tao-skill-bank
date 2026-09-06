@@ -60,3 +60,17 @@ def test_later_iteration_emits_three_deterministic_probe_specs(tmp_path: Path) -
         str(tmp_path / f"runs/probes/p{index}") for index in range(3)
     }
     assert all(spec["train"]["num_epochs"] == 10 for spec in specs)
+
+
+def test_yolo_is_routed_to_backend_specific_spec_writer(tmp_path: Path) -> None:
+    policy, coco, images = _fixture(tmp_path, 1, 20)
+    value = yaml.safe_load(policy.read_text())
+    value["model"] = {"backend": "yolo", "architecture": "yolo26x"}
+    policy.write_text(yaml.safe_dump(value))
+    try:
+        MODULE.prepare(policy, 1, coco, images, tmp_path / "runs",
+                       tmp_path / "specs", None, None)
+    except ValueError as error:
+        assert "write_yolo_specs.py" in str(error)
+    else:
+        raise AssertionError("YOLO must not be emitted as an RT-DETR spec")

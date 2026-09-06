@@ -23,8 +23,10 @@ completed outputs are immutable and reused by every iteration. Commit the
 ## 2. Baseline measurement and gaps
 
 Run `prepare_deft_od_aoi_measurement.py` with the frozen base checkpoint.
-Submit KPI and test inference via `tao-train-rtdetr`. KPI controls selection;
-test is report-only. Submit the emitted loose and strict gap specs via
+For RT-DETR, submit KPI and test inference via `tao-train-rtdetr`. For YOLO,
+use iteration-0 `write_yolo_specs.py` output and submit separate `evaluate`
+actions through `tao-train-yolo`. KPI controls selection; test is report-only.
+Submit the loose and strict gap specs via
 `tao-analyze-gaps-od-map`. Commit baseline measurement and gap artifacts.
 
 ## 3. Per-iteration retrieval
@@ -52,7 +54,7 @@ Re-run admission with the generated binary COCO and image root. Commit
 
 ## 6. Train and select
 
-Run `prepare_deft_od_aoi_training.py`. Iterations 1–2 emit direct
+For RT-DETR, run `prepare_deft_od_aoi_training.py`. Iterations 1–2 emit direct
 `train.yaml`. Later iterations may emit three probe specs. Submit probes,
 then run `select_deft_od_aoi_training.py probes` to materialize the selected
 main spec. Submit main training from the frozen base checkpoint.
@@ -60,6 +62,11 @@ main spec. Submit main training from the frozen base checkpoint.
 Run `select_deft_od_aoi_training.py checkpoint` over all status phases. If it
 emits `extension.yaml`, submit that same-iteration resume once and reselect
 with `--extension-applied`. Commit `iteration_training`.
+
+For YOLO, run `write_yolo_specs.py` with the cumulative COCO and image root,
+then submit its fresh-base train spec followed by separate KPI and report-only
+test evaluations through `tao-train-yolo`. YOLO skips RT-DETR probes,
+extension, and model soup.
 
 ## 7. Measure, gap, and advance
 

@@ -107,6 +107,19 @@ def test_initialize_rejects_boxless_defective_real_role(tmp_path: Path) -> None:
         MODULE.initialize(config, tmp_path / "results")
 
 
+def test_initialize_selects_yolo_leaf_without_changing_data_contract(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    value["model"] = {"backend": "yolo", "architecture": "yolo26x"}
+    value["base_checkpoint"] = str(tmp_path / "base.pt")
+    Path(value["base_checkpoint"]).write_bytes(b"yolo")
+    config.write_text(yaml.safe_dump(value))
+    state = MODULE.initialize(config, tmp_path / "results")
+    assert state["mode"] == "yolo_real_only"
+    assert state["detector_skill"] == "tao-train-yolo"
+    assert state["roles"]["clean"]["annotation_count"] == 0
+
+
 def test_initialize_routes_missing_synthesis_weights_to_bootstrap(tmp_path: Path) -> None:
     config = _config(tmp_path)
     value = yaml.safe_load(config.read_text())

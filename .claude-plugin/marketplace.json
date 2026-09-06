@@ -73,6 +73,7 @@
         "./skills/models/tao-train-pose-classification",
         "./skills/models/tao-train-reid",
         "./skills/models/tao-train-rtdetr",
+        "./skills/models/tao-train-yolo",
         "./skills/models/tao-train-segformer",
         "./skills/models/tao-train-sparse4d",
         "./skills/models/tao-train-visual-changenet",

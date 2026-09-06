@@ -1,6 +1,23 @@
-# RT-DETR training and selection policy
+# Detector training and selection policy
 
 Read this before preparing, submitting, resuming, or selecting training.
+
+## Backend split
+
+`model.backend: rtdetr` uses the existing adaptive training and selection
+contract below. `model.backend: yolo` delegates to `tao-train-yolo` and
+`write_yolo_specs.py`. The frozen YOLO comparison profile trains YOLO26X for
+100 epochs at image size 640 with patience 20, batch/nbs 32, four devices, and
+four data workers. It selects maximum KPI AP50, retains a separate terminal
+periodic checkpoint for recovery, and evaluates KPI and sealed test in separate
+actions. Test is report-only.
+
+YOLO currently has no LR probes, adaptive epoch budget, late-best extension,
+or model soup. Every DEFT iteration is fresh from the same frozen initializer.
+The runner stages the dataset and hot framework state on node-local storage and
+publishes only the declared compact artifacts. YOLO remains local-only pending
+license approval, and edge-AI training still requires enabled OneLogger
+callbacks.
 
 ## Frozen model contract
 

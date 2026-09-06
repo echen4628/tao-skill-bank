@@ -1,0 +1,30 @@
+[
+  {
+    "id": "tao-train-yolo-basic",
+    "question": "A user wants to train YOLO26X on binary defect COCO and retain a recovery checkpoint. Identify the skill and outline the safe workflow. Do not run commands or tools.",
+    "expected_skill": "tao-train-yolo",
+    "expected_script": "scripts/yolo_action.py",
+    "ground_truth": "Select tao-train-yolo, use a nested train YAML, select by KPI AP50, publish separate selected and terminal resume checkpoints, and pass the launch and license reviews without launching.",
+    "expected_behavior": [
+      "Selects tao-train-yolo",
+      "Requires binary COCO category id 1 named defect",
+      "Uses KPI AP50 for checkpoint selection",
+      "Distinguishes selected.pt from terminal_resume.pt",
+      "Applies platform, OneLogger, and license launch gates",
+      "Does not execute training"
+    ]
+  },
+  {
+    "id": "tao-train-yolo-sealed-test",
+    "question": "Evaluate a selected YOLO checkpoint on the sealed DEFT test set. Explain the contract without running it.",
+    "expected_skill": "tao-train-yolo",
+    "expected_script": "scripts/yolo_action.py",
+    "ground_truth": "Run a separate evaluate action with split_name test and report_only true after checkpoint selection is frozen; never use test metrics for selection.",
+    "expected_behavior": [
+      "Uses a separate evaluate action",
+      "Requires report_only true for test",
+      "Does not use test metrics for selection",
+      "Does not execute evaluation"
+    ]
+  }
+]

@@ -9,7 +9,8 @@ policy once.
 - An installed supported execution platform; never choose among peers silently.
 - `max_iterations`.
 - Four normalized roles described in `data-contract.md`.
-- One trainable RT-DETR base checkpoint. Every iteration starts from this same
+- One detector backend (`rtdetr` or the local-only `yolo` option) and one
+  compatible trainable base checkpoint. Every iteration starts from this same
   checkpoint; a prior iteration checkpoint is never the next initializer.
 - Separate KPI and test roles.
 - An explicit synthesis decision.
@@ -40,8 +41,14 @@ defaults are:
 - three ten-epoch probes from iteration 3 onward;
 - adaptive main budget of 24–48 epochs;
 - one 12-epoch late-best extension;
+- YOLO26X comparison profile: 100 epochs, patience 20, image size 640,
+  batch/nbs 32, four devices, and four data workers;
 - synthesis disabled;
 - synthetic cumulative cap `0.25` relative to admitted real defects.
 
 A value frozen in the policy is no longer a default. Changing it starts a new
 contract rather than silently mutating an existing run.
+
+The probe, adaptive-budget, late-extension, and soup defaults apply only to
+RT-DETR. The initial YOLO backend intentionally disables those unvalidated
+stages and performs separate KPI and report-only test evaluations.

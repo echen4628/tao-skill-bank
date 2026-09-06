@@ -2,6 +2,9 @@ class_name: defect
 max_iterations: null
 platform: null
 base_checkpoint: null
+model:
+  backend: rtdetr
+  architecture: rtdetr
 sources:
   kpi: {images: null, coco: null}
   test: {images: null, coco: null}
@@ -51,6 +54,36 @@ training:
   jitter_backbone_lr_factor: [0.8, 1.2]
   late_best_window: 3
   extension_epochs: 12
+yolo:
+  training:
+    profile: yolo_customer_comparison_v1
+    num_gpus: 4
+    epochs: 100
+    patience: 20
+    imgsz: 640
+    batch_size: 32
+    nbs: 32
+    devices: "0,1,2,3"
+    workers: 4
+    stage_workers: 16
+    optimizer: auto
+    lr0: 0.01
+    lrf: 0.01
+    momentum: 0.9
+    weight_decay: 0.0005
+    warmup_epochs: 3.0
+    amp: true
+    deterministic: true
+    seed: 0
+    close_mosaic: 10
+  evaluation:
+    imgsz: 640
+    batch_size: 64
+    workers: 8
+    stage_workers: 16
+    confidence: 0.001
+    iou: 0.7
+    max_det: 300
 synthesis:
   enabled: false
   pool_dataset_root: null

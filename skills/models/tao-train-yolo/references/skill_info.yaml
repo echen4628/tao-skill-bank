@@ -1,0 +1,115 @@
+network_arch: yolo
+aliases:
+- yolo26x
+- ultralytics-yolo
+type: model
+automl_enabled: false
+container_image: docker.io/ultralytics/ultralytics:8.4.131  # unpinned: experimental third-party image pending license approval
+execution_environment: container
+gpu_spec_key: train.num_gpus
+required_credentials: []
+license_review_required: true
+data_format:
+  type: coco
+  categories:
+    - id: 1
+      name: defect
+actions:
+  train:
+    mode: config
+    config_format: yaml
+    command: python scripts/yolo_action.py train --config {config_path}
+    inputs:
+      model.checkpoint:
+        type: file
+      dataset.train_coco:
+        type: file
+      dataset.train_images:
+        type: folder
+      dataset.eval_coco:
+        type: file
+      dataset.eval_images:
+        type: folder
+    outputs:
+      results_dir:
+        type: folder
+      selected_checkpoint:
+        type: file
+      terminal_resume_checkpoint:
+        type: file
+      training_curve:
+        type: file
+      selection:
+        type: file
+      status:
+        type: file
+    upload_excludes:
+      - trainer/**
+      - dataset/**
+      - caches/**
+    execution_contract:
+      distributed:
+        launcher: direct
+        processes_per_node: 1
+        tasks_per_node: 1
+      environment:
+        PYTHONUNBUFFERED: "1"
+      supporting_files:
+        - source: scripts/yolo_action.py
+          destination: scripts/yolo_action.py
+          sha256: c23313ed7f31499a57d81adc11656e07f43bf00e8b5e0738f83e844f1951a4e5
+        - source: scripts/yolo_common.py
+          destination: scripts/yolo_common.py
+          sha256: e8b74f40b2c0bc64d8a24dfe8aea3d9239adf66d237c7f9fb453d51ae27c9be7
+      completion:
+        child_exit_code_path: "{results_dir}/child_exit_code"
+        structured_status_path: "{results_dir}/status.json"
+        success_states: [COMPLETE]
+  evaluate:
+    mode: config
+    config_format: yaml
+    command: python scripts/yolo_action.py evaluate --config {config_path}
+    inputs:
+      model.checkpoint:
+        type: file
+      dataset.eval_coco:
+        type: file
+      dataset.eval_images:
+        type: folder
+    outputs:
+      results_dir:
+        type: folder
+      predictions:
+        type: file
+      native_metrics:
+        type: file
+      common_coco_metrics:
+        type: file
+      kitti_labels:
+        type: folder
+      measurement_manifest:
+        type: file
+      status:
+        type: file
+    upload_excludes:
+      - evaluation/**/plots/**
+      - dataset/**
+      - caches/**
+    execution_contract:
+      distributed:
+        launcher: direct
+        processes_per_node: 1
+        tasks_per_node: 1
+      environment:
+        PYTHONUNBUFFERED: "1"
+      supporting_files:
+        - source: scripts/yolo_action.py
+          destination: scripts/yolo_action.py
+          sha256: c23313ed7f31499a57d81adc11656e07f43bf00e8b5e0738f83e844f1951a4e5
+        - source: scripts/yolo_common.py
+          destination: scripts/yolo_common.py
+          sha256: e8b74f40b2c0bc64d8a24dfe8aea3d9239adf66d237c7f9fb453d51ae27c9be7
+      completion:
+        child_exit_code_path: "{results_dir}/child_exit_code"
+        structured_status_path: "{results_dir}/status.json"
+        success_states: [COMPLETE]

@@ -12,6 +12,7 @@ validate contracts; model and data skills own their container actions.
 | `admit_deft_od_aoi_coco.py` | Admit unique real/clean/synthetic sources into cumulative binary COCO. |
 | `prepare_deft_od_aoi_measurement.py` | Emit KPI/test RT-DETR inference and loose/strict gap specs. |
 | `prepare_deft_od_aoi_training.py` | Emit direct main training or deterministic probe specs. |
+| `write_yolo_specs.py` | Emit fresh-base YOLO train plus separate KPI/test evaluation specs. |
 | `select_deft_od_aoi_training.py` | Select the best probe or KPI-best checkpoint and optional extension. |
 | `commit_deft_od_aoi_stage.py` | Verify artifacts and atomically advance application state. |
 | `prepare_deft_od_aoi_synthesis.py` | Normalize exact strict FNs into AnomalyGenNext preparation input. |
@@ -22,6 +23,7 @@ validate contracts; model and data skills own their container actions.
 | Stage | Owning skill |
 |---|---|
 | RT-DETR inference and training | `tao-train-rtdetr` |
+| YOLO training and evaluation | `tao-train-yolo` |
 | Loose and strict OD gap analysis | `tao-analyze-gaps-od-map` |
 | Candidate and query embedding | `tao-generate-image-embeddings` |
 | Unique-image mining | `tao-mine-od-images` |
