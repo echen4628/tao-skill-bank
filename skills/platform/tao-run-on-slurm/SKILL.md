@@ -36,7 +36,10 @@ Confirm `SLURM_USER` and `SLURM_HOSTNAME` are exported and passwordless SSH to a
 login host works (`ssh -o BatchMode=yes`).
 The launch host needs `ssh`, not local `sbatch`, `srun`, Enroot, or a Lustre
 mount. Preflight those scheduler, Pyxis, Enroot, and shared-storage dependencies
-on the selected remote login/compute frame. Model-specific inspectors may be
+on the selected remote login/compute frame. The shared preflight wraps every
+remote probe in `bash -lc` with the complete probe shell-quoted as one argument;
+this boundary is required because supported login accounts may default to
+`csh` or `tcsh`, which cannot parse the probes' POSIX syntax. Model-specific inspectors may be
 streamed from the installed skill over SSH stdin; do not stage an ad-hoc source
 patch or treat the launch host as the SLURM frame.
 For private `nvcr.io` images, install `~/.config/enroot/.credentials` on the

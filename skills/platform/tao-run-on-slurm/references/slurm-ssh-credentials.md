@@ -13,7 +13,8 @@ SLURM_HOST="${SLURM_HOSTNAME%%,*}"
   echo "  set -a; source /path/to/.env; set +a"
   exit 1
 }
-ssh -o BatchMode=yes -o ConnectTimeout=10 "${SLURM_USER}@${SLURM_HOST}" "true" 2>/dev/null || {
+ssh -o BatchMode=yes -o ConnectTimeout=10 "${SLURM_USER}@${SLURM_HOST}" \
+  "bash -lc 'true'" 2>/dev/null || {
   echo "MISSING: passwordless SSH to ${SLURM_USER}@${SLURM_HOST} not working. See the Prerequisites section."
   exit 1
 }
@@ -41,6 +42,13 @@ fi
 ```
 
 If a check fails, the agent prompts the user to authorize the install/fix via Bash.
+
+Keep every noninteractive preflight probe behind the same `bash -lc` boundary,
+and shell-quote the entire probe as the single command argument. Some supported
+accounts use `csh` or `tcsh` as their login shell; sending `&&`, redirects, or
+POSIX variable syntax directly lets that shell reject the probe before Bash can
+run it. The shared `check_tao_launch_preflight.py` helper applies this wrapping
+to SSH connectivity, scheduler/runtime, remote-path, and JSON-field probes.
 
 The enroot-credentials step (#2) only needs to run **once per (cluster, user)** —
 subsequent SLURM sessions inherit the file. Use the `printf | ssh` heredoc

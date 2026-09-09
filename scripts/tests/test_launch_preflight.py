@@ -3,6 +3,7 @@
 
 """Focused tests for launch-preflight GPU architecture handling."""
 
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -11,6 +12,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import check_tao_launch_preflight as preflight  # noqa: E402
+
+
+def _remote_bash_payload(command: list[str]) -> str:
+    words = shlex.split(command[-1])
+    assert words[:2] == ["bash", "-lc"]
+    assert len(words) == 3
+    return words[2]
 
 
 @pytest.mark.parametrize(
@@ -181,7 +189,7 @@ def test_slurm_preflight_checks_remote_scheduler_pyxis_and_enroot(monkeypatch, t
 
     def fake_run(command, timeout=30, env=None):
         commands.append(command)
-        remote = command[-1]
+        remote = _remote_bash_payload(command)
         if remote == "echo TAO_SSH_OK":
             return subprocess.CompletedProcess(command, 0, stdout="TAO_SSH_OK\n", stderr="")
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
@@ -196,7 +204,7 @@ def test_slurm_preflight_checks_remote_scheduler_pyxis_and_enroot(monkeypatch, t
         "credential_groups": [{"require_one_of": ["SSH_KEY_PATH", "SSH_AUTH_SOCK"]}],
     }
     assert preflight.check_slurm(platform, [("data", "/shared/data")], {}, 20, False)
-    remote_commands = [command[-1] for command in commands]
+    remote_commands = [_remote_bash_payload(command) for command in commands]
     assert any("command -v sbatch" in command for command in remote_commands)
     assert any("command -v enroot" in command for command in remote_commands)
     assert any("--container-image" in command for command in remote_commands)
@@ -216,7 +224,7 @@ def test_slurm_preflight_rejects_missing_remote_pyxis(monkeypatch, tmp_path, cap
     monkeypatch.setattr(preflight, "check_slurm_runtime", lambda _platform: True)
 
     def fake_run(command, timeout=30, env=None):
-        remote = command[-1]
+        remote = _remote_bash_payload(command)
         if remote == "echo TAO_SSH_OK":
             return subprocess.CompletedProcess(command, 0, stdout="TAO_SSH_OK\n", stderr="")
         if "command -v sbatch" in remote:
@@ -234,3 +242,14 @@ def test_slurm_preflight_rejects_missing_remote_pyxis(monkeypatch, tmp_path, cap
     }
     assert not preflight.check_slurm(platform, [], {}, 20, False)
     assert "Remote SLURM/Pyxis/Enroot preflight failed" in capsys.readouterr().out
+
+
+def test_slurm_ssh_commands_force_bash_and_preserve_shell_quoting(monkeypatch):
+    monkeypatch.setenv("SLURM_USER", "user")
+    remote = "printf '%s\\n' \"a'b c\" && test -e '/shared/a b' 2>&1"
+
+    command = preflight.ssh_command("login.example", remote)
+
+    assert command[-2] == "user@login.example"
+    assert command[-1] == f"bash -lc {shlex.quote(remote)}"
+    assert _remote_bash_payload(command) == remote
