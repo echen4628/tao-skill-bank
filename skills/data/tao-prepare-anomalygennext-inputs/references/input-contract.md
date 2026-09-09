@@ -23,6 +23,14 @@ Selection supports:
 The same frozen encoder identity is written to both embedding specs. The next
 action must use those specs unchanged so clean and FN vectors remain comparable.
 
+Frozen legacy lineages may set
+`compatibility: {determinism: legacy_v1}`. This optional nested contract
+preserves historical string-typed identifier hashing, lexicographic image-ID
+and bbox ordering, mask binarization, mask sampling seed, independent-with-
+replacement sampled-mask choice, pair identifier, and inclusive maximum bbox
+pixel behavior. The selected mode is recorded in `input_contract.json`.
+Omitting the compatibility block preserves the native behavior.
+
 `run_amp` joins the unique source-image embedding back to every box-level FN,
 ranks clean images within the normalized texture pool, and creates two AMP
 requests for every eligible pair. It rejects missing, non-finite, zero-norm, or

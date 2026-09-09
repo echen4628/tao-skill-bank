@@ -19,6 +19,7 @@ import yaml
 
 
 BRANCHES = {"fn_mask", "same_type_sampled_mask"}
+DETERMINISM_MODES = {"native", "legacy_v1"}
 
 
 def _matrix(values: pd.Series) -> np.ndarray:
@@ -32,8 +33,14 @@ def _matrix(values: pd.Series) -> np.ndarray:
     return matrix / norms
 
 
-def _pair_id(fn_id: str, clean: str) -> str:
-    return "pair-" + hashlib.sha256(f"{fn_id}\0{clean}".encode()).hexdigest()[:16]
+def _pair_id(fn_id: str, clean: str, compatibility_mode: str = "native") -> str:
+    if compatibility_mode == "legacy_v1":
+        text = "\x1f".join(json.dumps(value, sort_keys=True) for value in (fn_id, clean))
+    elif compatibility_mode == "native":
+        text = f"{fn_id}\0{clean}"
+    else:
+        raise ValueError(f"unsupported compatibility.determinism: {compatibility_mode}")
+    return "pair-" + hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
 def plan(root: Path, config: dict[str, Any]) -> dict[str, Any]:
@@ -53,6 +60,12 @@ def plan(root: Path, config: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("one or more FN queries have no embedding")
     clean_vectors, query_vectors = _matrix(clean.embedding), _matrix(queries.embedding)
     retrieval = config["retrieval"]
+    compatibility = config.get("compatibility") or {}
+    if not isinstance(compatibility, dict):
+        raise ValueError("compatibility must be a mapping")
+    compatibility_mode = str(compatibility.get("determinism", "native"))
+    if compatibility_mode not in DETERMINISM_MODES:
+        raise ValueError(f"unsupported compatibility.determinism: {compatibility_mode}")
     if retrieval.get("metric", "cosine") != "cosine":
         raise ValueError("only cosine retrieval is supported")
     topn, floor = int(retrieval["candidate_topn"]), float(retrieval["min_similarity"])
@@ -76,7 +89,7 @@ def plan(root: Path, config: dict[str, Any]) -> dict[str, Any]:
             reason = "below_similarity_floor" if score < floor else (
                 "prior_iteration_exclusion" if clean_path in excluded else ""
             )
-            pair = _pair_id(str(query.fn_id), clean_path)
+            pair = _pair_id(str(query.fn_id), clean_path, compatibility_mode)
             candidate = {
                 "candidate_id": pair, "fn_id": str(query.fn_id),
                 "query_order": int(query.query_order), "dataset_id": str(query.dataset_id),

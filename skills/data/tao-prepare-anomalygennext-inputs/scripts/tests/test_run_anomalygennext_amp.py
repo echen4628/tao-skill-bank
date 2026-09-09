@@ -61,3 +61,21 @@ def test_plan_rejects_zero_norm_embeddings(tmp_path: Path) -> None:
     frame.to_parquet(tmp_path / "embeddings" / "fn_embeddings.parquet")
     with pytest.raises(ValueError, match="zero-norm"):
         MODULE.plan(tmp_path, config)
+
+
+def test_legacy_pair_id_is_opt_in() -> None:
+    native = MODULE._pair_id("fn-1", "/clean/a.png")
+    legacy = MODULE._pair_id("fn-1", "/clean/a.png", "legacy_v1")
+    expected = "pair-" + __import__("hashlib").sha256(
+        '\"fn-1\"\x1f\"/clean/a.png\"'.encode()
+    ).hexdigest()[:16]
+    assert legacy == expected
+    assert legacy != native
+
+
+def test_plan_rejects_unknown_determinism_mode(tmp_path: Path) -> None:
+    config = inputs(tmp_path)
+    config["compatibility"] = {"determinism": "unknown"}
+
+    with pytest.raises(ValueError, match="unsupported compatibility.determinism"):
+        MODULE.plan(tmp_path, config)
