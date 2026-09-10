@@ -33,11 +33,8 @@ train:
   close_mosaic: 10
   resume: false
 runtime:
-  scratch_root: /raid/scratch/d123/yolo
+  scratch_root: /workspace/runtime/yolo
   allocation_start: 1788600000
-logging:
-  onelogger_enabled: true
-  callback_module: site_onelogger_adapter
 results_dir: /durable/runs/iteration_1/train
 ```
 
@@ -71,7 +68,7 @@ evaluation:
   max_det: 300
   report_only: false
 runtime:
-  scratch_root: /raid/scratch/d124/yolo
+  scratch_root: /workspace/runtime/yolo-eval
 results_dir: /durable/runs/iteration_1/kpi
 ```
 

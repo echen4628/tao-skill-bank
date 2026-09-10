@@ -32,10 +32,6 @@ def parse_args() -> argparse.Namespace:
         default="${TAO_RUNTIME_ROOT}",
         help="Node-local runtime path or an environment placeholder expanded in the job.",
     )
-    parser.add_argument(
-        "--onelogger-enabled", choices=("true", "false"), default="false"
-    )
-    parser.add_argument("--onelogger-callback-module")
     return parser.parse_args()
 
 
@@ -111,14 +107,6 @@ def build_specs(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
     training = yolo.get("training") or {}
     inference = yolo.get("evaluation") or {}
     runtime = args.runtime_root.rstrip("/")
-    onelogger_enabled = args.onelogger_enabled == "true"
-    callback = (args.onelogger_callback_module or "").strip()
-    if args.phase == "train" and onelogger_enabled and not callback:
-        raise ValueError("enabled OneLogger requires --onelogger-callback-module")
-    logging = {
-        "onelogger_enabled": onelogger_enabled,
-        **({"callback_module": callback} if callback else {}),
-    }
     probe_active = bool(probes.get("enabled")) and args.iteration >= int(
         probes.get("start_iteration", 1)
     )
@@ -171,7 +159,6 @@ def build_specs(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
             "resume": False,
         },
         "runtime": {"scratch_root": f"{runtime}/train"},
-        "logging": logging,
         "results_dir": "{results_dir}",
     }
 

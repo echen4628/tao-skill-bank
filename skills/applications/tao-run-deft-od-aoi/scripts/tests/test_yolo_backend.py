@@ -70,8 +70,6 @@ class YoloSpecWriterTest(unittest.TestCase):
             output_dir=str(self.root / "specs"),
             published_output_dir="/durable/specs",
             runtime_root="${TAO_RUNTIME_ROOT}",
-            onelogger_enabled="true",
-            onelogger_callback_module="company_onelogger",
         )
 
     def test_writes_three_ordered_specs(self) -> None:
@@ -86,12 +84,6 @@ class YoloSpecWriterTest(unittest.TestCase):
             str((self.root / "train_images").resolve()),
         )
         self.assertEqual(specs["train.yaml"]["results_dir"], "{results_dir}")
-
-    def test_requires_callback_when_onelogger_enabled(self) -> None:
-        args = self._args()
-        args.onelogger_callback_module = None
-        with self.assertRaisesRegex(ValueError, "callback"):
-            build_specs(args)
 
     def test_iteration_zero_writes_measurement_only_against_initializer(self) -> None:
         args = self._args()

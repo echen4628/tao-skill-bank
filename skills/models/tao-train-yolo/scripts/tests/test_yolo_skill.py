@@ -155,27 +155,20 @@ class YoloSkillTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "num_gpus must match"):
             load_config(path, "train")
 
-    def test_env_runtime_path_and_slurm_guard(self) -> None:
+    def test_env_runtime_path_is_accepted(self) -> None:
         path = self._config("evaluate")
         value = yaml.safe_load(path.read_text(encoding="utf-8"))
         value["runtime"]["scratch_root"] = "${YOLO_TEST_RUNTIME}/run"
         path.write_text(yaml.safe_dump(value), encoding="utf-8")
         old_runtime = os.environ.get("YOLO_TEST_RUNTIME")
-        old_job = os.environ.get("SLURM_JOB_ID")
         os.environ["YOLO_TEST_RUNTIME"] = "/tmp/yolo-test"
-        os.environ["SLURM_JOB_ID"] = "123"
         try:
-            with self.assertRaisesRegex(ValueError, "/raid/scratch"):
-                load_config(path, "evaluate")
+            load_config(path, "evaluate")
         finally:
             if old_runtime is None:
                 os.environ.pop("YOLO_TEST_RUNTIME", None)
             else:
                 os.environ["YOLO_TEST_RUNTIME"] = old_runtime
-            if old_job is None:
-                os.environ.pop("SLURM_JOB_ID", None)
-            else:
-                os.environ["SLURM_JOB_ID"] = old_job
 
     def test_stage_clean_negative_writes_empty_label(self) -> None:
         report = stage_coco(

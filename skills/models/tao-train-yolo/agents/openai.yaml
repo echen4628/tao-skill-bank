@@ -1,4 +1,0 @@
-interface:
-  display_name: "Train YOLO"
-  short_description: "Train and evaluate YOLO object detectors"
-  default_prompt: "Use $tao-train-yolo to train or evaluate a YOLO object detector from a nested YAML spec."

@@ -10,7 +10,6 @@
       "Requires binary COCO category id 1 named defect",
       "Uses KPI AP50 for checkpoint selection",
       "Distinguishes selected.pt from terminal_resume.pt",
-      "Applies platform, OneLogger, and license launch gates",
       "Does not execute training"
     ]
   },

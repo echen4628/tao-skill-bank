@@ -18,9 +18,7 @@ main training from the same initializer, never a probe checkpoint. Adaptive
 epoch budgets, late-best extension, and model soup remain unsupported.
 Every DEFT iteration is fresh from the same frozen initializer.
 The runner stages the dataset and hot framework state on node-local storage and
-publishes only the declared compact artifacts. YOLO remains local-only pending
-license approval, and edge-AI training still requires enabled OneLogger
-callbacks.
+publishes only the declared compact artifacts.
 
 ## Frozen model contract
 

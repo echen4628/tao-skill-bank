@@ -9,7 +9,7 @@ policy once.
 - An installed supported execution platform; never choose among peers silently.
 - `max_iterations`.
 - Four normalized roles described in `data-contract.md`.
-- One detector backend (`rtdetr` or the local-only `yolo` option) and one
+- One detector backend (`rtdetr` or `yolo`) and one
   compatible trainable base checkpoint. Every iteration starts from this same
   checkpoint; a prior iteration checkpoint is never the next initializer.
 - Separate KPI and test roles.

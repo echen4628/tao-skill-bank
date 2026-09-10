@@ -4,7 +4,7 @@ aliases:
 - ultralytics-yolo
 type: model
 automl_enabled: false
-container_image: docker.io/ultralytics/ultralytics:8.4.131  # unpinned: experimental third-party image pending license approval
+container_image: docker.io/ultralytics/ultralytics:8.4.131
 execution_environment: container
 gpu_spec_key: train.num_gpus
 required_credentials: []
@@ -57,7 +57,7 @@ actions:
       supporting_files:
         - source: scripts/yolo_action.py
           destination: scripts/yolo_action.py
-          sha256: 42790acd3e6f6bbffb36c906efe839aac47710d783b257bbece14f708e6aabce
+          sha256: 523fd6e76cbd047f1075e7065682542c3684e0247452b9e44eec963dee184139
         - source: scripts/yolo_common.py
           destination: scripts/yolo_common.py
           sha256: e8b74f40b2c0bc64d8a24dfe8aea3d9239adf66d237c7f9fb453d51ae27c9be7
@@ -105,7 +105,7 @@ actions:
       supporting_files:
         - source: scripts/yolo_action.py
           destination: scripts/yolo_action.py
-          sha256: 42790acd3e6f6bbffb36c906efe839aac47710d783b257bbece14f708e6aabce
+          sha256: 523fd6e76cbd047f1075e7065682542c3684e0247452b9e44eec963dee184139
         - source: scripts/yolo_common.py
           destination: scripts/yolo_common.py
           sha256: e8b74f40b2c0bc64d8a24dfe8aea3d9239adf66d237c7f9fb453d51ae27c9be7

@@ -1,8 +1,8 @@
 ---
 name: tao-train-yolo
-description: Train, resume, and evaluate Ultralytics YOLO object detectors from binary COCO data with KPI-based checkpoint selection and KITTI prediction export. Use when a user explicitly asks for YOLO detector training/evaluation, or when tao-run-deft-od-aoi selects the YOLO backend. Do not use for RT-DETR, generic TAO model training, or YOLO redistribution/licensing advice.
+description: Train, resume, and evaluate Ultralytics YOLO object detectors from binary COCO data with KPI-based checkpoint selection and KITTI prediction export. Use when a user explicitly asks for YOLO detector training/evaluation, or when tao-run-deft-od-aoi selects the YOLO backend. Do not use for RT-DETR or generic TAO model training.
 license: Apache-2.0
-compatibility: Requires Python with PyYAML, an Ultralytics 8.4.131 container, a selected execution platform, a user-supplied YOLO checkpoint, binary COCO data, and a reviewed Ultralytics/YOLO license posture. Edge-AI training also requires OneLogger callbacks and login material.
+compatibility: Requires Python with PyYAML, an Ultralytics 8.4.131 container, a selected execution platform, a user-supplied YOLO checkpoint, and binary COCO data.
 metadata:
   author: NVIDIA Corporation
   version: "0.1.0"
@@ -18,9 +18,6 @@ tags:
 # Train YOLO
 
 Run YOLO object-detection training and evaluation through a nested YAML contract.
-This skill is local-only while the project resolves Ultralytics/YOLO licensing;
-do not publish the branch, container, weights, or derived redistribution bundle.
-
 ## Required reads
 
 1. Read [spec-contract.md](references/spec-contract.md).
@@ -41,8 +38,7 @@ do not publish the branch, container, weights, or derived redistribution bundle.
    resumes only the interrupted iteration from its terminal periodic
    checkpoint with optimizer state.
 4. Run the selected platform's preflight and the shared `$tao-launch-workflow`
-   launch review. On an edge-AI cluster, OneLogger callbacks and enablement are
-   a pre-submit gate; do not infer a waiver from old experiment artifacts.
+   launch review.
 5. Ask for confirmation before pulling an image or submitting a job.
 6. Dispatch `train` or `evaluate` through the platform four-verb contract and
    track it in a job-record.

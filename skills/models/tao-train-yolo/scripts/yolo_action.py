@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import argparse
-import importlib
 import json
 import os
 import shutil
@@ -32,7 +31,7 @@ from yolo_common import (
 )
 
 
-TOP_LEVEL_KEYS = {"model", "dataset", "train", "evaluation", "runtime", "logging", "results_dir"}
+TOP_LEVEL_KEYS = {"model", "dataset", "train", "evaluation", "runtime", "results_dir"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -144,28 +143,9 @@ def load_config(path: Path, action: str) -> dict[str, Any]:
         if not 0 <= confidence <= 1:
             raise ValueError("evaluation.confidence must be within [0, 1]")
     runtime = _mapping(config, "runtime")
-    scratch = _path(runtime.get("scratch_root"), "runtime.scratch_root", must_exist=False)
-    if os.environ.get("SLURM_JOB_ID") and not scratch.is_relative_to(Path("/raid/scratch")):
-        raise ValueError("SLURM runtime.scratch_root must be under /raid/scratch")
+    _path(runtime.get("scratch_root"), "runtime.scratch_root", must_exist=False)
     _path(config.get("results_dir"), "results_dir", must_exist=False)
-    logging = _mapping(config, "logging", required=False)
-    enabled = logging.get("onelogger_enabled")
-    if enabled is not None and not isinstance(enabled, bool):
-        raise ValueError("logging.onelogger_enabled must be boolean")
-    if enabled and not str(logging.get("callback_module", "")).strip():
-        raise ValueError("enabled OneLogger requires logging.callback_module")
     return config
-
-
-def _register_logging(model: object, config: dict[str, Any]) -> None:
-    logging = _mapping(config, "logging", required=False)
-    if not logging.get("onelogger_enabled"):
-        return
-    module = importlib.import_module(str(logging["callback_module"]))
-    register = getattr(module, "register", None)
-    if not callable(register):
-        raise ValueError("OneLogger callback module must export register(model)")
-    register(model)
 
 
 def _roots(config: dict[str, Any]) -> tuple[Path, Path, dict[str, int]]:
@@ -239,11 +219,9 @@ def run_train(config: dict[str, Any]) -> None:
         "train": _public_stage(train_report),
         "kpi": _public_stage(eval_report),
         "recipe": train,
-        "onelogger": _mapping(config, "logging", required=False),
     }
     atomic_json(output / "training_manifest.json", manifest)
     model = YOLO(str(checkpoint))
-    _register_logging(model, config)
     observed_optimizer: dict[str, str] = {}
 
     def capture_optimizer(trainer: object) -> None:

@@ -6,7 +6,7 @@ description: >-
   accumulate admitted COCO data, retrain from one base checkpoint, and select
   by KPI AP50. Use for iterative AOI defect detection, not generic multiclass OD.
 license: Apache-2.0
-compatibility: Requires the selected RT-DETR or Ultralytics YOLO detector image, Data Services images, CUDA GPUs, and normalized COCO roles. YOLO remains local-only pending license approval.
+compatibility: Requires the selected RT-DETR or Ultralytics YOLO detector image, Data Services images, CUDA GPUs, and normalized COCO roles.
 metadata:
   author: NVIDIA Corporation
   version: "0.2.0"
@@ -31,6 +31,7 @@ Read only the references needed for the current stage:
 - gaps and retrieval: `references/gap-routing.md` and
   `references/tao-analyze-gaps-od-map.md`;
 - training and selection: `references/training-policy.md`;
+- YOLO backend setup and run sequence: `references/yolo-backend.md`;
 - optional synthesis: `references/anomalygen-pool.md`.
 
 ## Start

@@ -10,8 +10,6 @@ Complete this gate before creating a job record or submitting any action.
 - Confirm KPI is used for selection and test is report-only.
 - Resolve the selected RT-DETR or YOLO detector, Data Services, SigLIP embedding, mining, and optional
   AnomalyGenNext images from their owning skills.
-- For YOLO, record the reviewed license posture and keep the integration local;
-  on edge-AI, gate training on enabled OneLogger callbacks and login presence.
 - Confirm GPU shape, storage mappings, runtime estimate, and durable
   `results_dir`.
 - Confirm synthesis is disabled or has exact pixel masks, a defect

@@ -1,8 +1,7 @@
-# Local-only YOLO backend for DEFT OD AOI
+# YOLO backend for DEFT OD AOI
 
 This runbook demonstrates how the binary DEFT OD AOI application can use YOLO
-instead of RT-DETR. It is intentionally kept on a local branch until the
-Ultralytics/YOLO license and redistribution plan are approved.
+instead of RT-DETR.
 
 ## What changes
 
@@ -25,13 +24,11 @@ the same loose-0.3 and strict-0.8 gap analysis.
 - A user-supplied YOLO initializer compatible with the chosen architecture.
 - Iteration count and synthesis decision. Synthesis retains all existing
   AnomalyGenNext mask, recipe, checkpoint/bootstrap, and type gates.
-- YOLO image/container version and reviewed license status.
-- On edge-AI: OneLogger login presence, callback adapter module, and enabled
-  job configuration.
+- YOLO image/container version.
 - Durable result root and node-local runtime root.
 
-Do not download an initializer, pull an image, submit a job, or push the branch
-before the corresponding user/launch approval.
+Do not download an initializer, pull an image, or submit a job before the
+corresponding user/launch approval.
 
 ## Freeze the backend policy
 
@@ -62,7 +59,7 @@ The nested `yolo` policy section freezes the customer-comparison profile:
 checkpoints. Explicit reviewed user overrides should be recorded as such; these
 are not general recommendations for arbitrary YOLO datasets.
 
-## Generate the leaf specs
+## Prepare the YOLO run configurations
 
 For iteration 0, call the same helper with `--phase baseline --iteration 0` and omit
 `--train-coco` and `--train-images`. It writes only KPI/test evaluation specs against the supplied
@@ -81,9 +78,7 @@ After cumulative COCO assembly for iteration N:
   --train-images /durable/run/iteration_1/assembly/images \
   --output-dir /node/local/spec-staging \
   --published-output-dir /durable/run/iteration_1/specs \
-  --runtime-root '${TAO_RUNTIME_ROOT}' \
-  --onelogger-enabled true \
-  --onelogger-callback-module site_onelogger_adapter
+  --runtime-root '${TAO_RUNTIME_ROOT}'
 ```
 
 Copy each phase's YAMLs plus `yolo_spec_manifest.json` to the exact published
@@ -111,16 +106,6 @@ Each action receives its own job-record and immutable result directory:
 Use the selected platform skill's `submit`, `status`, `logs`, and `cancel`
 verbs. The platform backend is the source of live status.
 
-## SLURM requirements
-
-Set `TAO_RUNTIME_ROOT` to a short job-specific directory below
-`/raid/scratch`. Stage custom code and the hot dataset there; execute no custom
-code, environment, cache, socket, or database from Lustre. Put all framework
-caches under the runtime root. The batch wrapper must record allocation,
-staging-complete, workload-start/end, and copy-back-complete timestamps and use
-an `EXIT` trap that preserves the workload exit status while copying back only
-the declared artifacts.
-
 ## Recovery
 
 Resume only an interrupted iteration. Set `train.resume: true`, use that run's
@@ -135,11 +120,3 @@ train:
 Publish to a new retry-linked job-record/results directory. The runner merges
 curves by reported epoch and selects KPI AP50 across both segments. Never use a
 stripped KPI-best checkpoint as the recovery checkpoint.
-
-## Customer evidence package
-
-Retain the frozen policy/spec manifest, exact image identity, initializer and
-selected-checkpoint hashes, complete training curve, KPI/test common COCO
-metrics, KPI KITTI predictions, timing summary, job records, and the statement
-that test was report-only. Compare YOLO and RT-DETR on the same frozen data
-roles and KPI/test definitions; do not tune either backend from test results.
