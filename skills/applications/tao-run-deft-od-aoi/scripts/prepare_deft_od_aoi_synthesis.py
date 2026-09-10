@@ -79,12 +79,14 @@ def prepare(policy_path: Path, strict_gaps: Path, output: Path) -> dict[str, Any
         for source in (image, image.get("deft_od_aoi", {}), annotation,
                        annotation.get("deft_od_aoi", {})):
             metadata.update({key: source[key] for key in FIELDS if key in source})
+        dataset = str(metadata.get("dataset_id") or "")
+        if not dataset:
+            raise ValueError(f"FN metadata is missing dataset_id for {image_id}")
+        if dataset not in routes:
+            continue
         missing = [key for key in FIELDS if not str(metadata.get(key) or "").strip()]
         if missing:
             raise ValueError(f"FN metadata is incomplete for {image_id}: {missing}")
-        dataset = str(metadata["dataset_id"])
-        if dataset not in routes:
-            raise ValueError(f"FN dataset has no synthesis route: {dataset}")
         mask = Path(str(metadata["fn_mask_source"])).expanduser().resolve()
         if not mask.is_file():
             raise ValueError(f"FN pixel mask is missing: {mask}")

@@ -20,15 +20,21 @@ def test_synthesis_normalizes_exact_kpi_false_negative(tmp_path: Path) -> None:
     images = tmp_path / "kpi"
     images.mkdir()
     image, mask = images / "image.png", tmp_path / "mask.png"
+    no_route_image = images / "no-route.png"
     image.write_bytes(b"image")
+    no_route_image.write_bytes(b"image")
     mask.write_bytes(b"mask")
     coco = tmp_path / "kpi.json"
     coco.write_text(json.dumps({
         "images": [{"id": 7, "file_name": image.name, "dataset_id": "route",
-                    "texture_id": "texture"}],
+                    "texture_id": "texture"},
+                   {"id": 8, "file_name": no_route_image.name,
+                    "dataset_id": "evaluation_only"}],
         "annotations": [{"id": 3, "image_id": 7, "category_id": 1,
-                         "bbox": [4, 5, 10, 12], "defect_class": "crack",
-                         "fn_mask_source": str(mask)}],
+                          "bbox": [4, 5, 10, 12], "defect_class": "crack",
+                         "fn_mask_source": str(mask)},
+                        {"id": 4, "image_id": 8, "category_id": 1,
+                         "bbox": [1, 2, 3, 4]}],
         "categories": [{"id": 1, "name": "defect"}]}))
     pool = tmp_path / "pool"
     pool.mkdir()
@@ -51,7 +57,9 @@ def test_synthesis_normalizes_exact_kpi_false_negative(tmp_path: Path) -> None:
                                                     "amp_model_id": "nvidia/Cosmos3-Nano"}}))
     gaps = tmp_path / "strict.parquet"
     pd.DataFrame([{"image_id": 7, "filepath": str(image), "gap_type": "FN",
-                   "bbox": [4, 5, 14, 17], "class": "defect"}]).to_parquet(gaps)
+                   "bbox": [4, 5, 14, 17], "class": "defect"},
+                  {"image_id": 8, "filepath": str(no_route_image), "gap_type": "FN",
+                   "bbox": [1, 2, 4, 6], "class": "defect"}]).to_parquet(gaps)
     report = MODULE.prepare(policy, gaps, tmp_path / "out")
     assert report["fn_count"] == 1
     normalized = pd.read_parquet(tmp_path / "out/normalized_fn_gaps.parquet").iloc[0]
