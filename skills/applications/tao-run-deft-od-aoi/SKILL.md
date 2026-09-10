@@ -184,11 +184,12 @@ maximum KPI `val_mAP50`, never the latest checkpoint or test result.
 Set `model.backend: yolo` and a YOLO architecture such as `yolo26x` in the
 policy before initialization. `write_yolo_specs.py` reads the frozen KPI/test
 roles and initializer directly from that policy. Iteration 0 emits only KPI and
-report-only test evaluation specs. Later iterations additionally require the
-cumulative `--train-coco` and `--train-images` and emit one fresh-base training
-spec. Dispatch each YAML through `tao-train-yolo`; use the selected checkpoint
-for the two evaluations and the KPI action's scored KITTI labels for shared gap
-analysis. Every iteration starts from the same initializer.
+report-only test evaluation specs. Later iterations use `--phase train` with
+the cumulative `--train-coco` and `--train-images`, then `--phase measure` with
+the completed train job's `selected.pt`. Dispatch each YAML through
+`tao-train-yolo`; the KPI action's scored KITTI labels feed shared gap analysis.
+Every iteration starts from the same initializer, and every action's job record
+binds its own `results_dir`.
 
 After each stage succeeds, commit at least one completion artifact with
 `commit_deft_od_aoi_stage.py`. It accepts only the next frozen stage, verifies

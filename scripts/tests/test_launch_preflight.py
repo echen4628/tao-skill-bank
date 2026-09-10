@@ -182,7 +182,7 @@ def test_slurm_preflight_checks_remote_scheduler_pyxis_and_enroot(monkeypatch, t
     def fake_run(command, timeout=30, env=None):
         commands.append(command)
         remote = command[-1]
-        if remote == "echo TAO_SSH_OK":
+        if "echo TAO_SSH_OK" in remote:
             return subprocess.CompletedProcess(command, 0, stdout="TAO_SSH_OK\n", stderr="")
         return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
@@ -217,7 +217,7 @@ def test_slurm_preflight_rejects_missing_remote_pyxis(monkeypatch, tmp_path, cap
 
     def fake_run(command, timeout=30, env=None):
         remote = command[-1]
-        if remote == "echo TAO_SSH_OK":
+        if "echo TAO_SSH_OK" in remote:
             return subprocess.CompletedProcess(command, 0, stdout="TAO_SSH_OK\n", stderr="")
         if "command -v sbatch" in remote:
             return subprocess.CompletedProcess(command, 1, stdout="", stderr="enroot missing")
@@ -234,3 +234,11 @@ def test_slurm_preflight_rejects_missing_remote_pyxis(monkeypatch, tmp_path, cap
     }
     assert not preflight.check_slurm(platform, [], {}, 20, False)
     assert "Remote SLURM/Pyxis/Enroot preflight failed" in capsys.readouterr().out
+
+
+def test_slurm_ssh_commands_force_bash_for_csh_login_hosts(monkeypatch):
+    monkeypatch.setenv("SLURM_USER", "user")
+    command = preflight.ssh_command("login.example", "echo ok && true 2>&1")
+    assert command[-2] == "user@login.example"
+    assert command[-1].startswith("bash -lc ")
+    assert "echo ok && true 2>&1" in command[-1]

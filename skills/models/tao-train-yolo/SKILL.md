@@ -58,8 +58,9 @@ do not publish the branch, container, weights, or derived redistribution bundle.
   with `evaluation.report_only: true` after the checkpoint is frozen.
 - Export scored KITTI labels from KPI predictions so the existing DEFT gap
   matcher can consume them without detector-specific logic.
-- Initial YOLO integration has no learning-rate probes, late-best extension,
-  or model soup. Those features require independent YOLO validation.
+- The DEFT application may orchestrate an optional three-recipe probe sweep
+  through independent calls to this leaf skill. This skill does not select
+  recipes itself. Late-best extension and model soup remain unsupported.
 
 ## Outputs
 

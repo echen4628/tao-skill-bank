@@ -844,7 +844,10 @@ def ssh_command(host: str, remote_command: str) -> list[str]:
         command.extend(
             ["-i", str(Path(key_path).expanduser()), "-o", "IdentitiesOnly=yes"]
         )
-    command.extend([f"{user}@{host}", remote_command])
+    # Some supported clusters use csh/tcsh as the login shell.  The runtime
+    # probe contains POSIX redirects and conditionals, so force the documented
+    # bash boundary instead of letting the login shell parse it first.
+    command.extend([f"{user}@{host}", f"bash -lc {shlex.quote(remote_command)}"])
     return command
 
 

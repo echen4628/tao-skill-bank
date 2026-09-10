@@ -63,10 +63,14 @@ Run `select_deft_od_aoi_training.py checkpoint` over all status phases. If it
 emits `extension.yaml`, submit that same-iteration resume once and reselect
 with `--extension-applied`. Commit `iteration_training`.
 
-For YOLO, run `write_yolo_specs.py` with the cumulative COCO and image root,
-then submit its fresh-base train spec followed by separate KPI and report-only
-test evaluations through `tao-train-yolo`. YOLO skips RT-DETR probes,
-extension, and model soup.
+For YOLO, run `write_yolo_specs.py` with the cumulative COCO and image root.
+When `yolo.probes.enabled` applies, generate the `probe` phase and submit its
+three independent fresh-base jobs with separate job-record-owned results.
+Run `select_yolo_probes.py` over their `selection.json` artifacts; it selects
+only by KPI AP50 and freezes the winning recipe. Pass that artifact to the
+`train` phase with `--probe-winner`. The main run starts from the standard
+base, never a probe checkpoint. Then run separate KPI and report-only test
+evaluations through `tao-train-yolo`. YOLO skips extension and model soup.
 
 ## 7. Measure, gap, and advance
 

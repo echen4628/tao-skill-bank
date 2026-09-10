@@ -107,6 +107,7 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
         raise ValueError("the YOLO backend requires a YOLO model.architecture")
     if backend == "yolo":
         yolo = policy.get("yolo") or {}
+        probes = yolo.get("probes") or {}
         training = yolo.get("training") or {}
         evaluation = yolo.get("evaluation") or {}
         for key in ("num_gpus", "epochs", "patience", "imgsz", "batch_size", "nbs", "stage_workers"):
@@ -115,6 +116,16 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
         for key in ("imgsz", "batch_size", "stage_workers", "max_det"):
             if int(evaluation.get(key, 0)) < 1:
                 raise ValueError(f"yolo.evaluation.{key} must be positive")
+        if probes.get("enabled"):
+            if int(probes.get("start_iteration", 0)) < 1 or int(probes.get("epochs", 0)) < 1:
+                raise ValueError("enabled yolo.probes needs positive start_iteration and epochs")
+            candidates = probes.get("candidates") or []
+            if len(candidates) != 3 or len({str(row.get("name") or "") for row in candidates}) != 3:
+                raise ValueError("enabled yolo.probes requires exactly three unique candidates")
+            for candidate in candidates:
+                for key in ("lr0", "lrf", "weight_decay"):
+                    if float(candidate.get(key, -1)) < 0:
+                        raise ValueError(f"yolo probe candidate {key} must be non-negative")
     role_reports = {name: _role(name, policy["sources"][name]) for name in ROLES}
     owners: dict[str, str] = {}
     for name, report in role_reports.items():

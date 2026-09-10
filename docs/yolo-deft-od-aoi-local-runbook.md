@@ -64,7 +64,7 @@ are not general recommendations for arbitrary YOLO datasets.
 
 ## Generate the leaf specs
 
-For iteration 0, call the same helper with `--iteration 0` and omit
+For iteration 0, call the same helper with `--phase baseline --iteration 0` and omit
 `--train-coco` and `--train-images`. It writes only KPI/test evaluation specs against the supplied
 initializer. Run them separately, use KPI KITTI labels for the baseline gaps,
 and keep test report-only.
@@ -75,19 +75,23 @@ After cumulative COCO assembly for iteration N:
 .venv/deft/bin/python \
   skills/applications/tao-run-deft-od-aoi/scripts/write_yolo_specs.py \
   --policy /durable/run/deft_contract/deft_od_aoi_policy.yaml \
+  --phase train \
   --iteration 1 \
   --train-coco /durable/run/iteration_1/assembly/train.json \
   --train-images /durable/run/iteration_1/assembly/images \
   --output-dir /node/local/spec-staging \
   --published-output-dir /durable/run/iteration_1/specs \
-  --results-root /durable/run \
   --runtime-root '${TAO_RUNTIME_ROOT}' \
   --onelogger-enabled true \
   --onelogger-callback-module site_onelogger_adapter
 ```
 
-Copy the three YAMLs plus `yolo_spec_manifest.json` to the exact published
-directory. Reject every durable manifest containing a resolved node-local path.
+Copy each phase's YAMLs plus `yolo_spec_manifest.json` to the exact published
+directory. After training completes, invoke the helper again with
+`--phase measure --selected-checkpoint <train-job-results>/selected.pt`; it
+emits the KPI/test specs. Each action keeps `results_dir: "{results_dir}"` so
+the job record remains authoritative. Reject every durable manifest containing
+a resolved node-local path.
 
 ## Dispatch order
 

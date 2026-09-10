@@ -55,6 +55,16 @@ training:
   late_best_window: 3
   extension_epochs: 12
 yolo:
+  probes:
+    enabled: false
+    start_iteration: 1
+    epochs: 10
+    seed_base: 4000
+    close_mosaic: 0
+    candidates:
+      - {name: conservative, lr0: 0.007, lrf: 0.006, weight_decay: 0.001}
+      - {name: baseline, lr0: 0.01, lrf: 0.01, weight_decay: 0.0005}
+      - {name: aggressive, lr0: 0.014, lrf: 0.016, weight_decay: 0.00025}
   training:
     profile: yolo_customer_comparison_v1
     num_gpus: 4

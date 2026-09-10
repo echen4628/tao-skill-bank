@@ -20,18 +20,20 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--policy", required=True)
     parser.add_argument("--iteration", required=True, type=int)
+    parser.add_argument("--phase", choices=("baseline", "probe", "train", "measure"), required=True)
     parser.add_argument("--train-coco", help="Required after iteration 0.")
     parser.add_argument("--train-images", help="Required after iteration 0.")
+    parser.add_argument("--selected-checkpoint", help="Required for post-train measurement.")
+    parser.add_argument("--probe-winner", help="Frozen winning_recipe.json for probe-selected main training.")
     parser.add_argument("--output-dir", required=True)
     parser.add_argument("--published-output-dir")
-    parser.add_argument("--results-root", required=True)
     parser.add_argument(
         "--runtime-root",
         default="${TAO_RUNTIME_ROOT}",
         help="Node-local runtime path or an environment placeholder expanded in the job.",
     )
     parser.add_argument(
-        "--onelogger-enabled", choices=("true", "false"), required=True
+        "--onelogger-enabled", choices=("true", "false"), default="false"
     )
     parser.add_argument("--onelogger-callback-module")
     return parser.parse_args()
@@ -88,8 +90,14 @@ def build_specs(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
         raise ValueError("model.architecture must identify YOLO")
     if not 0 <= args.iteration <= int(policy["max_iterations"]):
         raise ValueError("iteration is outside the frozen policy range")
-    if args.iteration > 0 and (not args.train_coco or not args.train_images):
+    if args.phase == "baseline" and args.iteration != 0:
+        raise ValueError("baseline phase requires iteration 0")
+    if args.phase in {"probe", "train", "measure"} and args.iteration < 1:
+        raise ValueError("probe/train/measure phases require a positive iteration")
+    if args.phase in {"probe", "train"} and (not args.train_coco or not args.train_images):
         raise ValueError("--train-coco and --train-images are required after iteration 0")
+    if args.phase == "measure" and not args.selected_checkpoint:
+        raise ValueError("measure phase requires --selected-checkpoint")
     train_coco = _absolute_file(args.train_coco) if args.train_coco else None
     train_images = _absolute_dir(args.train_images) if args.train_images else None
     sources = policy.get("sources") or {}
@@ -99,18 +107,36 @@ def build_specs(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
     test_images = _absolute_dir(str((sources.get("test") or {}).get("images") or ""))
     checkpoint = _absolute_file(str(policy.get("base_checkpoint") or ""))
     yolo = policy.get("yolo") or {}
+    probes = yolo.get("probes") or {}
     training = yolo.get("training") or {}
     inference = yolo.get("evaluation") or {}
-    results = _identity(args.results_root) / f"iteration_{args.iteration}"
     runtime = args.runtime_root.rstrip("/")
     onelogger_enabled = args.onelogger_enabled == "true"
     callback = (args.onelogger_callback_module or "").strip()
-    if onelogger_enabled and not callback:
+    if args.phase == "train" and onelogger_enabled and not callback:
         raise ValueError("enabled OneLogger requires --onelogger-callback-module")
     logging = {
         "onelogger_enabled": onelogger_enabled,
         **({"callback_module": callback} if callback else {}),
     }
+    probe_active = bool(probes.get("enabled")) and args.iteration >= int(
+        probes.get("start_iteration", 1)
+    )
+    winner: dict[str, Any] | None = None
+    if args.phase == "probe" and not probe_active:
+        raise ValueError("YOLO probes are disabled for this iteration")
+    if args.phase == "train" and probe_active:
+        if not getattr(args, "probe_winner", None):
+            raise ValueError("probe-enabled main training requires --probe-winner")
+        winner_path = Path(args.probe_winner).expanduser().resolve()
+        if not winner_path.is_file():
+            raise FileNotFoundError(winner_path)
+        winner = json.loads(winner_path.read_text(encoding="utf-8"))
+        if int(winner.get("iteration", -1)) != args.iteration:
+            raise ValueError("probe winner iteration does not match requested iteration")
+        if winner.get("selected_by") != "kpi_validation_ap50":
+            raise ValueError("probe winner must be selected only by KPI validation AP50")
+
     train = {
         "model": {
             "architecture": model["architecture"],
@@ -146,11 +172,20 @@ def build_specs(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
         },
         "runtime": {"scratch_root": f"{runtime}/train"},
         "logging": logging,
-        "results_dir": str(results / "train"),
+        "results_dir": "{results_dir}",
     }
 
+    if winner is not None:
+        overrides = winner.get("overrides") or {}
+        allowed = {"optimizer", "lr0", "lrf", "momentum", "weight_decay", "seed"}
+        if not isinstance(overrides, dict) or not overrides or set(overrides) - allowed:
+            raise ValueError("probe winner contains invalid or empty training overrides")
+        train["train"].update(overrides)
+
     selected_checkpoint = (
-        checkpoint if args.iteration == 0 else str(results / "train" / "selected.pt")
+        _absolute_file(args.selected_checkpoint)
+        if args.phase == "measure"
+        else checkpoint
     )
 
     def evaluation_spec(
@@ -175,20 +210,51 @@ def build_specs(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
                 "report_only": report_only,
             },
             "runtime": {"scratch_root": f"{runtime}/{split}"},
-            "results_dir": str(results / split),
+            "results_dir": "{results_dir}",
         }
 
-    specs = {
-        "kpi_evaluate.yaml": evaluation_spec(kpi_coco, kpi_images, "kpi", False),
-        "test_evaluate.yaml": evaluation_spec(test_coco, test_images, "test", True),
-    }
-    if args.iteration > 0:
-        specs = {"train.yaml": train, **specs}
+    if args.phase == "probe":
+        candidates = probes.get("candidates") or []
+        if len(candidates) != 3:
+            raise ValueError("YOLO probe policy requires exactly three candidates")
+        names: set[str] = set()
+        specs = {}
+        for index, candidate in enumerate(candidates):
+            if not isinstance(candidate, dict):
+                raise ValueError("each YOLO probe candidate must be a mapping")
+            name = str(candidate.get("name") or "").strip()
+            if not name or name in names:
+                raise ValueError("YOLO probe candidate names must be non-empty and unique")
+            names.add(name)
+            probe = json.loads(json.dumps(train))
+            probe["train"].update(
+                epochs=int(probes["epochs"]),
+                patience=int(probes["epochs"]),
+                close_mosaic=int(probes.get("close_mosaic", 0)),
+                seed=int(probes.get("seed_base", 4000)) + args.iteration,
+                lr0=float(candidate["lr0"]),
+                lrf=float(candidate["lrf"]),
+                weight_decay=float(candidate["weight_decay"]),
+            )
+            specs[f"probe_{index}_{name}.yaml"] = probe
+    elif args.phase == "train":
+        specs = {"train.yaml": train}
+    else:
+        specs = {
+            "kpi_evaluate.yaml": evaluation_spec(kpi_coco, kpi_images, "kpi", False),
+            "test_evaluate.yaml": evaluation_spec(test_coco, test_images, "test", True),
+        }
     return specs
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
     specs = build_specs(args)
+    policy = yaml.safe_load(Path(args.policy).expanduser().resolve().read_text())
+    probes = (policy.get("yolo") or {}).get("probes") or {}
+    winner = (
+        json.loads(Path(args.probe_winner).expanduser().resolve().read_text(encoding="utf-8"))
+        if getattr(args, "probe_winner", None) else None
+    )
     output = Path(args.output_dir).expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
     published = _identity(args.published_output_dir or str(output))
@@ -202,11 +268,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "schema_version": 1,
         "detector_backend": "yolo",
         "iteration": args.iteration,
+        "phase": args.phase,
         "leaf_skill": "tao-train-yolo",
         "actions": actions,
         "ordering": ordering,
         "test_is_report_only": True,
-        "unsupported": ["probes", "late_best_extension", "model_soup"],
+        "probe_selection": winner,
+        "probe_candidates": (probes.get("candidates") if args.phase == "probe" else None),
+        "probe_seed": (
+            int(probes.get("seed_base", 4000)) + args.iteration
+            if args.phase == "probe" else None
+        ),
+        "unsupported": ["late_best_extension", "model_soup"],
     }
     _freeze_json(output / "yolo_spec_manifest.json", manifest)
     return manifest
