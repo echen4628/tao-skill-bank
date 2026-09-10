@@ -11,6 +11,12 @@ hot working set there before execution. Put `TMPDIR`, `XDG_CACHE_HOME`,
 and compiler caches under the same job-local root. Never execute custom code,
 an environment, or a database from Lustre.
 
+For multi-GPU Ultralytics jobs, also set `YOLO_CONFIG_DIR` beneath the same
+job-local root so generated DDP launch files never use the container overlay.
+Create a job-private node-local directory with mode `1777` and bind it to
+`/dev/shm`; dataloader multiprocessing can otherwise hang during teardown on
+the cluster's container-default shared-memory mount.
+
 The rendered batch script must record allocation/start, staging-complete,
 workload-start/end, and copy-back-complete timestamps. Its `EXIT` trap must
 preserve the workload exit code and copy back only the allowlisted outputs.

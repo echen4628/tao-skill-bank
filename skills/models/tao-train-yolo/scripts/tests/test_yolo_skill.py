@@ -8,6 +8,7 @@ import csv
 import hashlib
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -127,6 +128,16 @@ class YoloSkillTest(unittest.TestCase):
             for helper in execution["supporting_files"]:
                 payload = (skill_root / helper["source"]).read_bytes()
                 self.assertEqual(hashlib.sha256(payload).hexdigest(), helper["sha256"])
+
+    def test_successful_cli_exit_is_not_reported_as_fatal(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, str(SCRIPT_DIR / "yolo_action.py"), "--help"],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(completed.returncode, 0)
+        self.assertNotIn("FATAL", completed.stderr)
 
     def test_nested_flat_dotted_key_is_rejected(self) -> None:
         path = self._config("train")
@@ -249,6 +260,44 @@ class YoloSkillTest(unittest.TestCase):
         self.assertEqual((output / "terminal_resume.pt").read_bytes(), b"terminal")
         self.assertEqual(json.loads((output / "status.json").read_text())["state"], "COMPLETE")
         self.assertFalse((output / "trainer").exists())
+
+    def test_job_record_staged_directory_can_preexist(self) -> None:
+        class FakeYOLO:
+            def __init__(self, checkpoint: str) -> None:
+                self.trainer = None
+
+            def add_callback(self, name: str, callback: object) -> None:
+                pass
+
+            def train(self, **kwargs: object) -> None:
+                train_dir = Path(str(kwargs["project"])) / str(kwargs["name"])
+                weights = train_dir / "weights"
+                weights.mkdir(parents=True)
+                with (train_dir / "results.csv").open("w", newline="", encoding="utf-8") as handle:
+                    writer = csv.writer(handle)
+                    writer.writerow(["epoch", "metrics/mAP50(B)"])
+                    writer.writerow([1, 0.7])
+                (weights / "epoch0.pt").write_bytes(b"selected")
+                (weights / "last.pt").write_bytes(b"last")
+                self.trainer = SimpleNamespace(save_dir=train_dir)
+
+        staged = self.root / "results/staged"
+        staged.mkdir(parents=True)
+        (staged / "spec.yaml").write_text("immutable input\n", encoding="utf-8")
+        config = load_config(self._config("train"), "train")
+        with mock.patch.dict(sys.modules, {"ultralytics": SimpleNamespace(YOLO=FakeYOLO)}):
+            run_train(config)
+        self.assertEqual((staged / "spec.yaml").read_text(), "immutable input\n")
+        self.assertEqual(json.loads((self.root / "results/status.json").read_text())["state"], "COMPLETE")
+
+    def test_existing_workload_artifacts_are_rejected(self) -> None:
+        output = self.root / "results"
+        output.mkdir()
+        (output / "selected.pt").write_bytes(b"old")
+        config = load_config(self._config("train"), "train")
+        with mock.patch.dict(sys.modules, {"ultralytics": SimpleNamespace(YOLO=object)}):
+            with self.assertRaisesRegex(FileExistsError, "workload artifacts"):
+                run_train(config)
 
     def test_evaluate_action_publishes_predictions_and_report(self) -> None:
         class FakeYOLO:

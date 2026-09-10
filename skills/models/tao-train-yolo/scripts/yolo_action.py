@@ -173,7 +173,16 @@ def _roots(config: dict[str, Any]) -> tuple[Path, Path, dict[str, int]]:
     scratch = _path(runtime["scratch_root"], "runtime.scratch_root", must_exist=False)
     output = _path(config["results_dir"], "results_dir", must_exist=False)
     scratch.mkdir(parents=True, exist_ok=False)
-    output.mkdir(parents=True, exist_ok=False)
+    # The platform binds results_dir when it opens the job record, before the
+    # workload is submitted, and may place immutable launch inputs beneath its
+    # staged/ directory.  Accept that control-plane-owned directory while still
+    # refusing to mix a new action with artifacts from an earlier attempt.
+    output.mkdir(parents=True, exist_ok=True)
+    unexpected = sorted(path.name for path in output.iterdir() if path.name != "staged")
+    if unexpected:
+        raise FileExistsError(
+            f"results_dir already contains workload artifacts: {', '.join(unexpected)}"
+        )
     now = int(time.time())
     timings = {
         "allocation_start": int(runtime.get("allocation_start", now)),
@@ -422,6 +431,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except BaseException as error:
+    except Exception as error:
         print(f"FATAL: {type(error).__name__}: {error}", file=sys.stderr, flush=True)
         raise

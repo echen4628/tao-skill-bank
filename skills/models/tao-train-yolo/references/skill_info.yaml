@@ -57,7 +57,7 @@ actions:
       supporting_files:
         - source: scripts/yolo_action.py
           destination: scripts/yolo_action.py
-          sha256: c23313ed7f31499a57d81adc11656e07f43bf00e8b5e0738f83e844f1951a4e5
+          sha256: 42790acd3e6f6bbffb36c906efe839aac47710d783b257bbece14f708e6aabce
         - source: scripts/yolo_common.py
           destination: scripts/yolo_common.py
           sha256: e8b74f40b2c0bc64d8a24dfe8aea3d9239adf66d237c7f9fb453d51ae27c9be7
@@ -105,7 +105,7 @@ actions:
       supporting_files:
         - source: scripts/yolo_action.py
           destination: scripts/yolo_action.py
-          sha256: c23313ed7f31499a57d81adc11656e07f43bf00e8b5e0738f83e844f1951a4e5
+          sha256: 42790acd3e6f6bbffb36c906efe839aac47710d783b257bbece14f708e6aabce
         - source: scripts/yolo_common.py
           destination: scripts/yolo_common.py
           sha256: e8b74f40b2c0bc64d8a24dfe8aea3d9239adf66d237c7f9fb453d51ae27c9be7
