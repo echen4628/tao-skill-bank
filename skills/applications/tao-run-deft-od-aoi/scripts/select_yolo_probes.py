@@ -46,6 +46,19 @@ def select(manifest_path: Path, selections: list[Path], output: Path) -> dict[st
         })
     winner = max(scored, key=lambda row: (row["metric_value"], -row["index"]))
     candidate = candidates[winner["index"]]
+    fixed = manifest.get("probe_fixed_overrides") or {}
+    if not isinstance(fixed, dict) or set(fixed) - {"optimizer", "momentum"}:
+        raise ValueError("probe manifest contains invalid fixed training overrides")
+    overrides = {
+        "lr0": float(candidate["lr0"]),
+        "lrf": float(candidate["lrf"]),
+        "weight_decay": float(candidate["weight_decay"]),
+        "seed": int((manifest.get("probe_seed") or 4000 + int(manifest["iteration"]))),
+    }
+    if "optimizer" in fixed:
+        overrides["optimizer"] = str(fixed["optimizer"])
+    if "momentum" in fixed:
+        overrides["momentum"] = float(fixed["momentum"])
     value = {
         "schema_version": 1,
         "iteration": int(manifest["iteration"]),
@@ -55,12 +68,7 @@ def select(manifest_path: Path, selections: list[Path], output: Path) -> dict[st
         "fresh_standard_base_for_main": True,
         "winner": winner,
         "scores": scored,
-        "overrides": {
-            "lr0": float(candidate["lr0"]),
-            "lrf": float(candidate["lrf"]),
-            "weight_decay": float(candidate["weight_decay"]),
-            "seed": int((manifest.get("probe_seed") or 4000 + int(manifest["iteration"]))),
-        },
+        "overrides": overrides,
         "probe_manifest": str(manifest_path.resolve()),
         "probe_manifest_sha256": _sha256(manifest_path),
     }

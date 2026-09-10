@@ -250,7 +250,9 @@ def build_specs(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
 def run(args: argparse.Namespace) -> dict[str, Any]:
     specs = build_specs(args)
     policy = yaml.safe_load(Path(args.policy).expanduser().resolve().read_text())
-    probes = (policy.get("yolo") or {}).get("probes") or {}
+    yolo = policy.get("yolo") or {}
+    probes = yolo.get("probes") or {}
+    training = yolo.get("training") or {}
     winner = (
         json.loads(Path(args.probe_winner).expanduser().resolve().read_text(encoding="utf-8"))
         if getattr(args, "probe_winner", None) else None
@@ -277,6 +279,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "probe_candidates": (probes.get("candidates") if args.phase == "probe" else None),
         "probe_seed": (
             int(probes.get("seed_base", 4000)) + args.iteration
+            if args.phase == "probe" else None
+        ),
+        "probe_fixed_overrides": (
+            {
+                "optimizer": str(training["optimizer"]),
+                "momentum": float(training["momentum"]),
+            }
             if args.phase == "probe" else None
         ),
         "unsupported": ["late_best_extension", "model_soup"],

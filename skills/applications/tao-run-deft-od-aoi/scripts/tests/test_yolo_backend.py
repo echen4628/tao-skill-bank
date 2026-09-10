@@ -45,6 +45,10 @@ class YoloSpecWriterTest(unittest.TestCase):
             sources[name] = {"images": str(images), "coco": str(coco)}
         (self.root / "base.pt").write_bytes(b"weights")
         policy = yaml.safe_load((SCRIPT_DIR.parents[0] / "assets/default_policy.yaml").read_text())
+        # Use an explicit optimizer recipe to verify that probe selection carries
+        # fixed training values without changing the packaged defaults.
+        policy["yolo"]["training"]["optimizer"] = "MuSGD"
+        policy["yolo"]["training"]["momentum"] = 0.9
         policy.update(max_iterations=2, base_checkpoint=str(self.root / "base.pt"))
         policy["model"] = {"backend": "yolo", "architecture": "yolo26x"}
         policy["sources"].update({"kpi": sources["kpi"], "test": sources["test"]})
@@ -163,12 +167,16 @@ class YoloSpecWriterTest(unittest.TestCase):
         )
         self.assertEqual(winner["winner"]["name"], "baseline")
         self.assertFalse(winner["test_used_for_selection"])
+        self.assertEqual(winner["overrides"]["optimizer"], "MuSGD")
+        self.assertEqual(winner["overrides"]["momentum"], 0.9)
         args = self._args()
         args.probe_winner = str(winner_path)
         spec = build_specs(args)["train.yaml"]
         self.assertEqual(spec["model"]["checkpoint"], str((self.root / "base.pt").resolve()))
         self.assertEqual(spec["train"]["lr0"], 0.01)
         self.assertEqual(spec["train"]["seed"], 4001)
+        self.assertEqual(spec["train"]["optimizer"], "MuSGD")
+        self.assertEqual(spec["train"]["momentum"], 0.9)
 
 
 if __name__ == "__main__":
