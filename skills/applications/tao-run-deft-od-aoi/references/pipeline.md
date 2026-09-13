@@ -22,7 +22,9 @@ completed outputs are immutable and reused by every iteration. Commit the
 
 ## 2. Baseline measurement and gaps
 
-Run `prepare_deft_od_aoi_measurement.py` with the frozen base checkpoint.
+Run `prepare_deft_od_aoi_measurement.py` with the frozen routing seed. In the
+default `true_fresh` mode, that seed is the same public checkpoint used to
+initialize every training job.
 For RT-DETR, submit KPI and test inference via `tao-train-rtdetr`. For YOLO,
 use iteration-0 `write_yolo_specs.py` output and submit separate `evaluate`
 actions through `tao-train-yolo`. KPI controls selection; test is report-only.
@@ -32,22 +34,26 @@ Submit the loose and strict gap specs via
 ## 3. Per-iteration retrieval
 
 Run `prepare_deft_od_aoi_retrieval.py queries` with the previous strict and
-loose gap parquets. Submit each enabled query-embedding action, then each
-enabled `tao-mine-od-images` action. Empty roles require no job. Commit
-`iteration_retrieval`.
+loose gap parquets. Submit the combined query-embedding action, then run
+`route_deft_od_aoi_siglip.py`. Validate its admission preview, routing report,
+manifests, and ledgers before committing `iteration_retrieval`.
 
 ## 4. Admit real and clean data
 
-Run `admit_deft_od_aoi_coco.py`. For iteration 2 and later, pass the prior
+Run `assemble_deft_od_aoi_coco.py`. For iteration 2 and later, pass the prior
 iteration's cumulative `train.json`. Gate on the new binary COCO,
 `admitted_sources.parquet`, and `admission_report.json`. Commit
 `iteration_admission`.
 
 ## 5. Optional synthesis
 
-Run `prepare_deft_od_aoi_synthesis.py` against strict FN gaps. Pass the
-filtering YAML through `tao-prepare-anomalygennext-inputs`, complete its
-embedding and AMP actions, then invoke `tao-generate-od-defects`.
+Run `prepare_deft_od_aoi_synthesis.py` against strict FN gaps and bind the
+committed `synthetic_plan.json` by SHA-256. It deterministically freezes each
+anomaly type to `requested_images // 2` FN boxes, uses three fallback clean
+candidates per box, and retains one successful pair. Pass the filtering YAML
+through `tao-prepare-anomalygennext-inputs`, complete its embedding and AMP
+actions, verify the per-type plan reconciliation, then invoke
+`tao-generate-od-defects`.
 
 Re-run admission with the generated binary COCO and image root. Commit
 `iteration_synthesis`. Never synthesize from a box without its exact mask.
@@ -74,9 +80,10 @@ evaluations through `tao-train-yolo`. YOLO skips extension and model soup.
 
 ## 7. Measure, gap, and advance
 
-Prepare measurement with the KPI-best selected checkpoint, then repeat KPI/test
-inference and dual gap analysis. Commit measurement and gaps. Start the next
-iteration only from the committed state.
+Prepare measurement with the KPI-best selected checkpoint from iteration *n*;
+that checkpoint routes iteration *n+1*. Repeat KPI/test inference and dual gap
+analysis, commit them, and start the next iteration only from committed state.
+It never becomes the initializer for the next training job.
 
 After every application-owned stage, use `commit_deft_od_aoi_stage.py` with
 at least one existing completion artifact. The state is durable history; native

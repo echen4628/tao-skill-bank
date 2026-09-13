@@ -8,10 +8,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from deft_od_aoi_policy import build_policy
 
 
 DEFAULTS = Path(__file__).resolve().parents[1] / "assets" / "default_policy.yaml"
@@ -82,13 +86,47 @@ def _role(name: str, value: dict[str, Any]) -> dict[str, Any]:
             "identities": {str(path) for path in paths}}
 
 
-def initialize(config_path: Path, output: Path) -> dict[str, Any]:
+def _routing_policy(policy: dict[str, Any]) -> dict[str, Any]:
+    """Translate the public application policy into the proven routing contract."""
+    routed = build_policy(
+        max_iterations=int(policy["max_iterations"]),
+        synthetic_enabled=bool((policy.get("synthesis") or {}).get("enabled")),
+        probes_enabled=bool((policy.get("yolo") or {}).get("probes", {}).get("enabled")),
+        model_soup_enabled=False,
+        training_workers=int((policy.get("training") or {}).get("workers", 4)),
+        inference_workers=int((policy.get("yolo") or {}).get("evaluation", {}).get("workers", 8)),
+    )
+    routed["gap"].update({
+        key: policy["gap"][key]
+        for key in ("loose_confidence", "strict_confidence", "match_iou",
+                    "background_iou_upper", "near_miss_iou_upper")
+    })
+    routed["routing"].update(policy["routing"])
+    routed["retrieval"].update(policy["retrieval"])
+    routed["admission"].update(policy["admission"])
+    routed["synthetic"]["cumulative_fraction_of_defective"] = float(
+        (policy.get("synthesis") or {}).get("cumulative_fraction_of_real_defects", 0.25)
+    )
+    return routed
+
+
+def initialize(
+    config_path: Path,
+    output: Path,
+    *,
+    published_output: Path | None = None,
+) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(f"refusing to overwrite output: {output}")
     user = yaml.safe_load(config_path.read_text())
     if not isinstance(user, dict):
         raise ValueError("config must be a YAML mapping")
     policy = _merge(yaml.safe_load(DEFAULTS.read_text()), user)
+    if "near_miss_real_cap" in (user.get("routing") or {}):
+        raise ValueError(
+            "routing.near_miss_real_cap is obsolete; use "
+            "routing.near_miss_real_cap_per_pocket"
+        )
     if not isinstance(policy.get("max_iterations"), int) or policy["max_iterations"] < 1:
         raise ValueError("max_iterations must be a positive integer")
     if not str(policy.get("platform") or "").strip():
@@ -96,6 +134,19 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
     checkpoint = Path(str(policy.get("base_checkpoint") or "")).expanduser().resolve()
     if not checkpoint.is_file():
         raise ValueError("base_checkpoint must be a trainable detector file")
+    mode = str(policy.get("reproduction_mode") or "")
+    if mode not in {"true_fresh", "warm_seeded_historical"}:
+        raise ValueError(
+            "reproduction_mode must be true_fresh or warm_seeded_historical"
+        )
+    seed_raw = policy.get("routing_seed_checkpoint") or checkpoint
+    routing_seed = Path(str(seed_raw)).expanduser().resolve()
+    if not routing_seed.is_file():
+        raise ValueError("routing_seed_checkpoint must be a detector file")
+    if mode == "true_fresh" and _sha(routing_seed) != _sha(checkpoint):
+        raise ValueError(
+            "true_fresh requires routing_seed_checkpoint to match base_checkpoint"
+        )
     model = policy.get("model") or {}
     backend = str(model.get("backend") or "rtdetr")
     architecture = str(model.get("architecture") or "")
@@ -159,10 +210,13 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
                 raise ValueError(f"synthesis route {name} needs checkpoint/recipe or finetune inputs")
     output.mkdir(parents=True)
     policy["base_checkpoint"] = str(checkpoint)
+    policy["routing_seed_checkpoint"] = str(routing_seed)
     policy["sources"] = {name: {"images": role_reports[name]["images"],
                                  "coco": role_reports[name]["coco"]} for name in ROLES}
     frozen = output / "deft_od_aoi_policy.yaml"
     frozen.write_text(yaml.safe_dump(policy, sort_keys=False))
+    routing_policy = output / "deft_od_aoi_routing_policy.json"
+    _json(routing_policy, _routing_policy(policy))
     classmap = output / "inference_classmap.txt"
     classmap.write_text("background\ndefect\n")
     synthesis_enabled = bool(policy.get("synthesis", {}).get("enabled"))
@@ -171,6 +225,7 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
              and Path(str(route.get("recipe") or "")).is_file())
         for route in policy.get("synthesis", {}).get("routes", {}).values()
     )
+    published = (published_output or output).expanduser().resolve()
     state = {"schema_version": 1, "status": "READY",
              "mode": f"{backend}_with_synthesis" if synthesis_enabled else f"{backend}_real_only",
              "detector_backend": backend,
@@ -181,8 +236,16 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
              "current_iteration": 0,
              "next_stage": "synthesis_bootstrap" if bootstrap_required else "candidate_cache",
              "max_iterations": policy["max_iterations"], "platform": policy["platform"],
-             "base_checkpoint": str(checkpoint), "policy": str(frozen.resolve()),
-             "policy_sha256": _sha(frozen), "classmap": str(classmap.resolve()),
+             "reproduction_mode": mode,
+             "training_base_checkpoint": {"path": str(checkpoint), "sha256": _sha(checkpoint)},
+             "routing_seed_checkpoint": {"path": str(routing_seed), "sha256": _sha(routing_seed)},
+             # Retained for existing leaf helpers; training always consumes this value.
+             "base_checkpoint": str(checkpoint),
+             "policy": str(published / frozen.name),
+             "policy_sha256": _sha(frozen),
+             "classmap": str(published / classmap.name),
+             "routing_policy": str(published / routing_policy.name),
+             "routing_policy_sha256": _sha(routing_policy),
              "roles": role_reports, "iterations": {}}
     _json(output / "deft_state.json", state)
     return state
@@ -192,8 +255,18 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument(
+        "--published-output-dir",
+        type=Path,
+        help="durable destination recorded in state when output is staged elsewhere",
+    )
     args = parser.parse_args()
-    print(json.dumps(initialize(args.config.resolve(), args.output_dir.resolve()), sort_keys=True))
+    print(json.dumps(initialize(
+        args.config.resolve(),
+        args.output_dir.resolve(),
+        published_output=(args.published_output_dir.resolve()
+                          if args.published_output_dir else None),
+    ), sort_keys=True))
     return 0
 
 

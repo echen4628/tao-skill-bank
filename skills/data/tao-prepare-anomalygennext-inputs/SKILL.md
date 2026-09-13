@@ -88,8 +88,12 @@ Platform skills own staging and cache placement.
 
 - Preserve each box-level FN as a distinct `fn_id`.
 - Produce exactly two masks per FN: isolated FN and deterministic same-type.
+- Convert both AMP-facing branches from label masks to strict binary `0`/`255`
+  with `foreground = source > 0`; preserve the source canvas and record the
+  validated tight foreground extent.
 - Embed a repeated source image once while preserving every FN query row.
-- Require successful, nonempty, non-full-image aligned masks for both branches.
+- Require successful, nonempty, non-full-image aligned masks with a non-full
+  tight extent for both branches.
 - Never infer an anomaly type or placement prompt.
 - Refuse output reuse and never mutate a training pool.
 - Platform skills own transient staging, caches, and copy-back.

@@ -36,8 +36,33 @@ def _stable_id(*values: Any) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:16]
 
 
+def _legacy_stable_id(*values: Any) -> str:
+    """Match the stable identifiers used by frozen commercial-v1 lineages."""
+    text = "\x1f".join(json.dumps(value, sort_keys=True) for value in values)
+    return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+def _compatibility_mode(config: dict[str, Any]) -> str:
+    compatibility = config.get("compatibility") or {}
+    mode = str(compatibility.get("determinism", "native"))
+    if mode not in {"native", "legacy_commercial_v1"}:
+        raise ValueError(f"unsupported compatibility.determinism: {mode}")
+    return mode
+
+
 def _images(root: Path) -> list[Path]:
     return sorted(path.resolve() for path in root.iterdir() if path.suffix.lower() in IMAGE_SUFFIXES)
+
+
+def _available_sampled_masks(
+    candidates: list[Path], used: set[Path], compatibility_mode: str
+) -> list[Path]:
+    """Return the mask pool under the selected determinism contract."""
+    if compatibility_mode == "legacy_commercial_v1":
+        # The frozen commercial runtime sampled independently for each FN and
+        # therefore intentionally allowed the same source mask to be reused.
+        return candidates
+    return [path for path in candidates if path not in used] or candidates
 
 
 def _defect_specs(path: Path) -> dict[str, dict[str, Any]]:
@@ -63,31 +88,127 @@ def _recipe_types(path: Path) -> set[str]:
     return {f"{row[0]}+{row[1]}" for row in rows if isinstance(row, list) and len(row) == 2}
 
 
-def _isolate_mask(mask_path: Path, image_path: Path, bbox: Any, output: Path) -> None:
-    with Image.open(image_path) as image, Image.open(mask_path) as mask_image:
-        mask = np.asarray(mask_image.convert("L"))
-        if mask.shape != (image.height, image.width):
-            raise ValueError(f"mask/image dimensions differ: {mask_path}")
+def _foreground(mask_image: Image.Image, mask_path: Path) -> np.ndarray:
+    """Read label masks without palette conversion changing index zero."""
+    mask = np.asarray(mask_image)
+    if mask.ndim == 2:
+        foreground = mask > 0
+    elif mask.ndim == 3 and mask.shape[2] >= 1:
+        channels = mask[..., :3] if mask.shape[2] >= 3 else mask[..., :1]
+        foreground = np.any(channels > 0, axis=2)
+    else:
+        raise ValueError(f"unsupported mask shape {mask.shape}: {mask_path}")
+    return np.asarray(foreground, dtype=bool)
+
+
+def _binary_mask_metadata(
+    foreground: np.ndarray, mask_path: Path
+) -> tuple[np.ndarray, dict[str, Any]]:
+    if foreground.ndim != 2:
+        raise ValueError(f"mask foreground must be two-dimensional: {mask_path}")
+    height, width = foreground.shape
+    foreground_pixels = int(np.count_nonzero(foreground))
+    if foreground_pixels == 0:
+        raise ValueError(f"AMP mask has empty foreground: {mask_path}")
+    if foreground_pixels == foreground.size:
+        raise ValueError(f"AMP mask foreground fills the canvas: {mask_path}")
+    ys, xs = np.nonzero(foreground)
+    x1, y1, x2, y2 = int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
+    tight_width, tight_height = x2 - x1, y2 - y1
+    if tight_width <= 0 or tight_height <= 0:
+        raise ValueError(f"AMP mask has an empty tight extent: {mask_path}")
+    if tight_width == width and tight_height == height:
+        raise ValueError(f"AMP mask tight extent fills the canvas: {mask_path}")
+    binary = np.where(foreground, 255, 0).astype(np.uint8)
+    if set(np.unique(binary).tolist()) != {0, 255}:
+        raise AssertionError(f"AMP mask binarization failed: {mask_path}")
+    return binary, {
+        "canvas_width": width,
+        "canvas_height": height,
+        "foreground_bbox": [x1, y1, x2, y2],
+        "foreground_width": tight_width,
+        "foreground_height": tight_height,
+        "foreground_pixels": foreground_pixels,
+    }
+
+
+def _write_binary_mask(
+    mask_path: Path,
+    output: Path,
+    *,
+    expected_canvas: tuple[int, int] | None = None,
+    clip_bbox: tuple[int, int, int, int] | None = None,
+) -> dict[str, Any]:
+    with Image.open(mask_path) as mask_image:
+        foreground = _foreground(mask_image, mask_path)
+    if expected_canvas is not None and foreground.shape != (expected_canvas[1], expected_canvas[0]):
+        raise ValueError(f"mask/image dimensions differ: {mask_path}")
+    if clip_bbox is not None:
+        x1, y1, x2, y2 = clip_bbox
+        isolated = np.zeros_like(foreground)
+        isolated[y1:y2, x1:x2] = foreground[y1:y2, x1:x2]
+        foreground = isolated
+    binary, metadata = _binary_mask_metadata(foreground, mask_path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(binary).save(output)
+    with Image.open(output) as saved:
+        saved_mask = np.asarray(saved)
+        if saved.size != (metadata["canvas_width"], metadata["canvas_height"]):
+            raise AssertionError(f"AMP mask canvas changed while saving: {output}")
+        if set(np.unique(saved_mask).tolist()) != {0, 255}:
+            raise AssertionError(f"saved AMP mask is not strict binary: {output}")
+    return metadata
+
+
+def _isolate_mask(
+    mask_path: Path,
+    image_path: Path,
+    bbox: Any,
+    output: Path,
+    *,
+    legacy_inclusive_max: bool = False,
+) -> dict[str, Any]:
+    with Image.open(image_path) as image:
+        canvas = (image.width, image.height)
     box = np.asarray(bbox, dtype=float).reshape(-1)
     if box.size != 4 or not np.isfinite(box).all():
         raise ValueError(f"invalid bbox: {bbox!r}")
     x1, y1, x2, y2 = box
     x1, y1 = max(0, int(np.floor(x1))), max(0, int(np.floor(y1)))
-    x2, y2 = min(mask.shape[1], int(np.ceil(x2))), min(mask.shape[0], int(np.ceil(y2)))
+    padding = 1 if legacy_inclusive_max else 0
+    x2 = min(canvas[0], int(np.ceil(x2)) + padding)
+    y2 = min(canvas[1], int(np.ceil(y2)) + padding)
     if x2 <= x1 or y2 <= y1:
         raise ValueError(f"empty clipped bbox: {bbox!r}")
-    isolated = np.zeros_like(mask)
-    isolated[y1:y2, x1:x2] = mask[y1:y2, x1:x2]
-    if not np.any(isolated):
-        raise ValueError(f"FN bbox contains no mask pixels: {mask_path}")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(isolated).save(output)
+    try:
+        return _write_binary_mask(
+            mask_path, output, expected_canvas=canvas, clip_bbox=(x1, y1, x2, y2)
+        )
+    except ValueError as exc:
+        if "empty foreground" in str(exc):
+            raise ValueError(f"FN bbox contains no mask pixels: {mask_path}") from exc
+        raise
 
 
-def _select(rows: pd.DataFrame, selection: dict[str, Any]) -> pd.DataFrame:
+def _select(
+    rows: pd.DataFrame,
+    selection: dict[str, Any],
+    compatibility_mode: str = "native",
+) -> pd.DataFrame:
     datasets = [str(value) for value in selection.get("datasets", [])]
     eligible = rows[rows.dataset_id.astype(str).isin(datasets)].copy()
-    eligible = eligible.sort_values(["dataset_id", "image_id", "filepath", "fn_id"])
+    if compatibility_mode == "legacy_commercial_v1":
+        # The historical ledger serialized image ids before its final stable
+        # selection sort.  That lexicographic order also fixes AMP's global
+        # seed sequence, so it is part of the immutable replay contract.
+        eligible["_selection_image_id"] = eligible.image_id.astype(str)
+        eligible = eligible.sort_values(
+            ["dataset_id", "_selection_image_id", "filepath", "bbox_json"], kind="stable"
+        ).drop(columns="_selection_image_id")
+    else:
+        eligible = eligible.sort_values(
+            ["dataset_id", "image_id", "filepath", "fn_id"], kind="stable"
+        )
     mode = selection.get("mode", "all_eligible")
     if mode == "all_eligible":
         selected = eligible
@@ -113,6 +234,8 @@ def prepare(config_path: Path, output: Path) -> dict[str, Any]:
     config = yaml.safe_load(config_path.read_text())
     if not isinstance(config, dict):
         raise ValueError("config must be a YAML mapping")
+    compatibility_mode = _compatibility_mode(config)
+    stable_id = _legacy_stable_id if compatibility_mode == "legacy_commercial_v1" else _stable_id
     gaps = pd.read_parquet(Path(config["gap_parquet"]).expanduser().resolve())
     required = {"image_id", "filepath", "gap_type", "bbox", "class", "split"} | IDENTITY_COLUMNS
     missing = sorted(required - set(gaps.columns))
@@ -147,13 +270,20 @@ def prepare(config_path: Path, output: Path) -> dict[str, Any]:
         if not _images(clean_dir) or not _images(sampled_dir):
             continue
         bbox_json = json.dumps(np.asarray(row["bbox"]).reshape(-1).tolist(), separators=(",", ":"))
+        stable_image_id: Any = (
+            str(row["image_id"])
+            if compatibility_mode == "legacy_commercial_v1"
+            else row["image_id"]
+        )
         normalized.append({**row, "filepath": str(image), "fn_mask_source": str(mask),
                            "clean_dir": str(clean_dir), "sampled_dir": str(sampled_dir),
                            "bbox_json": bbox_json,
-                           "fn_id": "fn-" + _stable_id(dataset, row["image_id"], image, bbox_json)})
+                           "fn_id": "fn-" + stable_id(
+                               dataset, stable_image_id, str(image), bbox_json
+                           )})
     if not normalized:
         raise ValueError("no eligible normalized false negatives")
-    selected = _select(pd.DataFrame(normalized), config["selection"])
+    selected = _select(pd.DataFrame(normalized), config["selection"], compatibility_mode)
 
     root = output / "prepared_anomalygennext_inputs"
     manifests, specs_dir = output / "manifests", output / "specs"
@@ -169,18 +299,27 @@ def prepare(config_path: Path, output: Path) -> dict[str, Any]:
         fn_id, anomaly = str(row.fn_id), str(row.anomaly_type)
         mask_dir = masks_root / fn_id
         isolated = mask_dir / f"{fn_id}__fn_mask.png"
-        _isolate_mask(Path(row.fn_mask_source), Path(row.filepath), row.bbox, isolated)
+        isolated_metadata = _isolate_mask(
+            Path(row.fn_mask_source), Path(row.filepath), row.bbox, isolated,
+            legacy_inclusive_max=compatibility_mode == "legacy_commercial_v1",
+        )
         candidates = _images(Path(row.sampled_dir))
-        rng = random.Random(int(_stable_id(seed, fn_id), 16))
-        available = [path for path in candidates if path not in sampled_used[anomaly]] or candidates
+        rng_values = (seed, fn_id, anomaly) if compatibility_mode == "legacy_commercial_v1" else (seed, fn_id)
+        rng = random.Random(int(stable_id(*rng_values), 16))
+        available = _available_sampled_masks(
+            candidates, sampled_used[anomaly], compatibility_mode
+        )
         sampled = available[rng.randrange(len(available))]
         sampled_used[anomaly].add(sampled)
         sampled_output = mask_dir / f"{fn_id}__same_type_sampled_mask.png"
-        with Image.open(sampled) as image:
-            image.convert("L").save(sampled_output)
-        for branch, path in (("fn_mask", isolated), ("same_type_sampled_mask", sampled_output)):
+        sampled_metadata = _write_binary_mask(sampled, sampled_output)
+        for branch, path, metadata in (
+            ("fn_mask", isolated, isolated_metadata),
+            ("same_type_sampled_mask", sampled_output, sampled_metadata),
+        ):
             mask_rows.append({"fn_id": fn_id, "query_order": order, "dataset_id": row.dataset_id,
-                              "anomaly_type": anomaly, "branch": branch, "mask_path": str(path)})
+                              "anomaly_type": anomaly, "branch": branch, "mask_path": str(path),
+                              **metadata})
         query_rows.append({"filepath": row.filepath, "fn_id": fn_id, "query_order": order,
                            "dataset_id": row.dataset_id, "pool_key": row.texture_id,
                            "anomaly_type": anomaly, "od_category": row["class"]})

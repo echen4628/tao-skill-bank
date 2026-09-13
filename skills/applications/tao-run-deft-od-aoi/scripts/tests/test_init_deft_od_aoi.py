@@ -58,6 +58,22 @@ def test_initialize_freezes_real_only_disjoint_contract(tmp_path: Path) -> None:
     assert Path(state["policy"]).is_file()
     assert Path(state["classmap"]).read_text() == "background\ndefect\n"
     assert state["roles"]["clean"]["annotation_count"] == 0
+    assert state["reproduction_mode"] == "true_fresh"
+    assert state["training_base_checkpoint"]["sha256"] == state["routing_seed_checkpoint"]["sha256"]
+    assert Path(state["routing_policy"]).is_file()
+
+
+def test_initialize_records_durable_paths_for_scratch_copyback(tmp_path: Path) -> None:
+    scratch = tmp_path / "scratch" / "contract"
+    durable = tmp_path / "durable" / "contract"
+    state = MODULE.initialize(_config(tmp_path), scratch, published_output=durable)
+
+    assert state["policy"] == str(durable.resolve() / "deft_od_aoi_policy.yaml")
+    assert state["classmap"] == str(durable.resolve() / "inference_classmap.txt")
+    assert state["routing_policy"] == str(
+        durable.resolve() / "deft_od_aoi_routing_policy.json"
+    )
+    assert (scratch / "deft_od_aoi_policy.yaml").is_file()
 
 
 def test_initialize_rejects_role_overlap(tmp_path: Path) -> None:
@@ -140,3 +156,26 @@ def test_initialize_routes_missing_synthesis_weights_to_bootstrap(tmp_path: Path
     state = MODULE.initialize(config, tmp_path / "results")
     assert state["synthesis_bootstrap_required"] is True
     assert state["next_stage"] == "synthesis_bootstrap"
+
+
+def test_true_fresh_rejects_a_different_routing_seed(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    seed = tmp_path / "old-selected.pt"
+    seed.write_bytes(b"prior iteration")
+    value["routing_seed_checkpoint"] = str(seed)
+    config.write_text(yaml.safe_dump(value))
+    with pytest.raises(ValueError, match="true_fresh requires routing_seed_checkpoint"):
+        MODULE.initialize(config, tmp_path / "results")
+
+
+def test_warm_seed_mode_records_distinct_checkpoint_roles(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    seed = tmp_path / "old-selected.pt"
+    seed.write_bytes(b"prior iteration")
+    value.update(reproduction_mode="warm_seeded_historical",
+                 routing_seed_checkpoint=str(seed))
+    config.write_text(yaml.safe_dump(value))
+    state = MODULE.initialize(config, tmp_path / "results")
+    assert state["training_base_checkpoint"]["sha256"] != state["routing_seed_checkpoint"]["sha256"]

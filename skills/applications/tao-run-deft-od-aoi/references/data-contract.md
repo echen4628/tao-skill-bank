@@ -36,10 +36,12 @@ type declared by that route's recipe and defect specification.
 
 ## Cumulative admission
 
-`admit_deft_od_aoi_coco.py` recomputes similarity from the frozen embeddings,
+`route_deft_od_aoi_siglip.py` computes similarity from frozen embeddings,
 deduplicates selected crops to source images, rejects previously admitted
-sources, and publishes a new binary COCO. Pass `--previous-coco` from
-iteration 2 onward. Clean negatives are capped by
+sources, applies the strict/near/clean controller, and writes a hash-bound
+admission preview. Commit retrieval only after validating that preview. Then
+`assemble_deft_od_aoi_coco.py` publishes the previewed binary COCO; pass
+`--previous-coco` from iteration 2 onward. Clean negatives are capped by
 `routing.clean_cumulative_cap_per_real`. When synthesis is enabled, pass both
 the generated binary COCO and its image root. Synthetic admission is capped by
 `synthesis.cumulative_fraction_of_real_defects`. Existing records remain

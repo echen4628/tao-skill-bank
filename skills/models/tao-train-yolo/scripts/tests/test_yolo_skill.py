@@ -245,14 +245,54 @@ class YoloSkillTest(unittest.TestCase):
                 (weights / "last.pt").write_bytes(b"last")
                 self.trainer = SimpleNamespace(save_dir=train_dir)
 
-        config = load_config(self._config("train"), "train")
+        path = self._config("train")
+        value = yaml.safe_load(path.read_text(encoding="utf-8"))
+        value["train"]["optimizer"] = "MuSGD"
+        path.write_text(yaml.safe_dump(value), encoding="utf-8")
+        config = load_config(path, "train")
         with mock.patch.dict(sys.modules, {"ultralytics": SimpleNamespace(YOLO=FakeYOLO)}):
             run_train(config)
         output = self.root / "results"
         self.assertEqual((output / "selected.pt").read_bytes(), b"best")
         self.assertEqual((output / "terminal_resume.pt").read_bytes(), b"terminal")
         self.assertEqual(json.loads((output / "status.json").read_text())["state"], "COMPLETE")
+        selection = json.loads((output / "selection.json").read_text())
+        self.assertEqual(selection["optimizer_observed_class"], "unknown")
+        self.assertEqual(selection["optimizer_effective_name"], "MuSGD")
+        self.assertEqual(selection["optimizer_evidence_source"], "explicit_fresh_config")
         self.assertFalse((output / "trainer").exists())
+
+    def test_optimizer_callback_takes_precedence_over_configured_name(self) -> None:
+        class RuntimeOptimizer:
+            pass
+
+        class FakeYOLO:
+            def __init__(self, checkpoint: str) -> None:
+                self.trainer = None
+
+            def add_callback(self, name: str, callback: object) -> None:
+                self.callback = callback
+
+            def train(self, **kwargs: object) -> None:
+                train_dir = Path(str(kwargs["project"])) / str(kwargs["name"])
+                weights = train_dir / "weights"
+                weights.mkdir(parents=True)
+                with (train_dir / "results.csv").open("w", newline="", encoding="utf-8") as handle:
+                    writer = csv.writer(handle)
+                    writer.writerow(["epoch", "metrics/mAP50(B)"])
+                    writer.writerow([1, 0.7])
+                (weights / "epoch0.pt").write_bytes(b"selected")
+                (weights / "last.pt").write_bytes(b"last")
+                self.trainer = SimpleNamespace(save_dir=train_dir, optimizer=RuntimeOptimizer())
+                self.callback(self.trainer)
+
+        config = load_config(self._config("train"), "train")
+        with mock.patch.dict(sys.modules, {"ultralytics": SimpleNamespace(YOLO=FakeYOLO)}):
+            run_train(config)
+        selection = json.loads((self.root / "results/selection.json").read_text())
+        self.assertEqual(selection["optimizer_observed_class"], "RuntimeOptimizer")
+        self.assertEqual(selection["optimizer_effective_name"], "RuntimeOptimizer")
+        self.assertEqual(selection["optimizer_evidence_source"], "runtime_callback")
 
     def test_job_record_staged_directory_can_preexist(self) -> None:
         class FakeYOLO:

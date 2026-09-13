@@ -30,6 +30,119 @@ def _sha(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _read_json_artifact(artifacts: dict[str, dict[str, Any]], name: str) -> Any:
+    if name not in artifacts:
+        raise ValueError(f"stage commit requires artifact {name}")
+    return json.loads(Path(artifacts[name]["path"]).read_text())
+
+
+def _validate_iteration_retrieval(
+    state: dict[str, Any], iteration: int, artifacts: dict[str, dict[str, Any]]
+) -> None:
+    required_outputs = {
+        "routing_report", "mined_manifest", "defect_ledger", "clean_ledger",
+        "admission_index", "synthetic_plan",
+    }
+    preview = _read_json_artifact(artifacts, "admission_preview")
+    query_manifest = _read_json_artifact(artifacts, "query_manifest")
+    if preview.get("status") != "COMPLETE" or int(preview.get("iteration", -1)) != iteration:
+        raise ValueError("admission preview is incomplete or for another iteration")
+    controller = preview.get("controller") or {}
+    required_controller = {
+        "near_miss_real_cap_per_pocket", "near_miss_real_factor",
+        "clean_factor", "clean_cumulative_cap_per_real",
+    }
+    missing_controller = required_controller - set(controller)
+    if controller.get("strict") != "adaptive_per_pocket" or missing_controller:
+        raise ValueError("admission preview lacks the role/pocket-aware controller contract")
+    outputs = preview.get("outputs") or {}
+    if set(outputs) != required_outputs:
+        raise ValueError("admission preview output set is incomplete")
+    for name in sorted(required_outputs):
+        if name not in artifacts:
+            raise ValueError(f"iteration_retrieval requires artifact {name}")
+        if (outputs[name].get("path") != artifacts[name]["path"]
+                or outputs[name].get("sha256") != artifacts[name]["sha256"]
+                or int(outputs[name].get("bytes", -1)) != artifacts[name]["bytes"]):
+            raise ValueError(f"admission preview hash/path mismatch for {name}")
+    preview_inputs = preview.get("inputs") or {}
+    frozen_routing_sha = state.get("routing_policy_sha256")
+    if not frozen_routing_sha or (preview_inputs.get("routing_policy") or {}).get("sha256") != frozen_routing_sha:
+        raise ValueError("admission preview does not use the frozen routing policy")
+    query_input = preview_inputs.get("query_manifest") or {}
+    if (query_input.get("path") != artifacts["query_manifest"]["path"]
+            or query_input.get("sha256") != artifacts["query_manifest"]["sha256"]):
+        raise ValueError("admission preview does not bind the committed query manifest")
+    if (query_manifest.get("status") != "COMPLETE"
+            or int(query_manifest.get("iteration", -1)) != iteration):
+        raise ValueError("query manifest is incomplete or for another iteration")
+    report = _read_json_artifact(artifacts, "routing_report")
+    manifest = _read_json_artifact(artifacts, "mined_manifest")
+    defect_ledger = _read_json_artifact(artifacts, "defect_ledger")
+    clean_ledger = _read_json_artifact(artifacts, "clean_ledger")
+    counts = preview.get("counts") or {}
+    if report.get("queries") != query_manifest.get("query_counts") or counts.get("queries") != report.get("queries"):
+        raise ValueError("routing/query counts disagree")
+    if counts.get("selected") != report.get("selected"):
+        raise ValueError("routing selected counts disagree")
+    if int(counts.get("manifest_records", -1)) != len(manifest):
+        raise ValueError("mined manifest count disagrees with admission preview")
+    if int(counts.get("defect_ledger", -1)) != len(defect_ledger):
+        raise ValueError("defect ledger count disagrees with admission preview")
+    if int(counts.get("clean_ledger", -1)) != len(clean_ledger):
+        raise ValueError("clean ledger count disagrees with admission preview")
+
+
+def _committed_synthetic_plan(
+    state: dict[str, Any], iteration: int
+) -> tuple[dict[str, int], dict[str, Any]]:
+    for event in reversed(state.get("events", [])):
+        if event.get("stage") != "iteration_retrieval" or int(event.get("iteration", -1)) != iteration:
+            continue
+        artifact = (event.get("artifacts") or {}).get("synthetic_plan")
+        if not artifact:
+            break
+        path = Path(artifact["path"])
+        if _sha(path) != artifact["sha256"]:
+            raise ValueError("committed synthetic plan hash is stale")
+        plan = json.loads(path.read_text())
+        if not isinstance(plan, dict):
+            raise ValueError("committed synthetic plan is not a JSON object")
+        return {str(key): int(value) for key, value in plan.items()}, artifact
+    raise ValueError("iteration_synthesis has no committed retrieval synthetic plan")
+
+
+def _validate_iteration_synthesis(
+    state: dict[str, Any], iteration: int, artifacts: dict[str, dict[str, Any]]
+) -> None:
+    reconciliation = _read_json_artifact(artifacts, "synthesis_plan_reconciliation")
+    if reconciliation.get("status") != "COMPLETE":
+        raise ValueError("synthesis plan reconciliation is incomplete")
+    plan, committed = _committed_synthetic_plan(state, iteration)
+    reference = reconciliation.get("synthetic_plan") or {}
+    if (reference.get("path") != committed["path"]
+            or reference.get("sha256") != committed["sha256"]):
+        raise ValueError("synthesis reconciliation does not bind the committed synthetic plan")
+    per_type = reconciliation.get("per_type") or {}
+    if set(per_type) != set(plan):
+        raise ValueError("synthesis reconciliation type set disagrees with synthetic plan")
+    actual_total = shortfall_total = 0
+    for anomaly_type, requested in plan.items():
+        row = per_type[anomaly_type]
+        actual = int(row.get("generator_rows", -1))
+        shortfall = int(row.get("explicit_shortfall", -1))
+        if int(row.get("requested_images", -1)) != requested:
+            raise ValueError(f"synthesis requested count mismatch for {anomaly_type}")
+        if actual < 0 or shortfall < 0 or actual + shortfall != requested:
+            raise ValueError(f"synthesis count/shortfall mismatch for {anomaly_type}")
+        actual_total += actual
+        shortfall_total += shortfall
+    if (int(reconciliation.get("requested_total", -1)) != sum(plan.values())
+            or int(reconciliation.get("generator_row_count", -1)) != actual_total
+            or int(reconciliation.get("explicit_shortfall_total", -1)) != shortfall_total):
+        raise ValueError("synthesis reconciliation totals disagree with per-type counts")
+
+
 def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> dict[str, Any]:
     state = json.loads(state_path.read_text())
     if state.get("status") not in {"READY", "RUNNING"} or state.get("next_stage") != stage:
@@ -48,6 +161,10 @@ def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> d
         artifacts[name] = {"path": str(path), "sha256": _sha(path), "bytes": path.stat().st_size}
     if not artifacts:
         raise ValueError("at least one completion artifact is required")
+    if stage == "iteration_retrieval":
+        _validate_iteration_retrieval(state, iteration, artifacts)
+    if stage == "iteration_synthesis":
+        _validate_iteration_synthesis(state, iteration, artifacts)
     next_stage, status = NEXT.get(stage), "RUNNING"
     if stage == "iteration_admission" and state.get("synthesis_enabled"):
         next_stage = "iteration_synthesis"

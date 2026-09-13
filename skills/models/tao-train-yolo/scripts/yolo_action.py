@@ -69,6 +69,38 @@ def _directory(value: Any, label: str) -> Path:
     return path
 
 
+def _optimizer_evidence(
+    train: dict[str, Any], observed_optimizer: dict[str, str]
+) -> dict[str, str]:
+    """Describe optimizer evidence without pretending a parent DDP callback ran."""
+    requested = str(train["optimizer"])
+    observed = observed_optimizer.get("class")
+    if observed:
+        return {
+            "optimizer_requested_name": requested,
+            "optimizer_observed_class": observed,
+            "optimizer_effective_name": observed,
+            "optimizer_evidence_source": "runtime_callback",
+        }
+    if not bool(train["resume"]) and requested.lower() != "auto":
+        # Ultralytics launches multi-GPU training in a child process and does not
+        # carry model-local callbacks into that process. For a fresh run, an
+        # explicit optimizer name is nevertheless the deterministic effective
+        # choice: unsupported names fail before training begins.
+        return {
+            "optimizer_requested_name": requested,
+            "optimizer_observed_class": "unknown",
+            "optimizer_effective_name": requested,
+            "optimizer_evidence_source": "explicit_fresh_config",
+        }
+    return {
+        "optimizer_requested_name": requested,
+        "optimizer_observed_class": "unknown",
+        "optimizer_effective_name": "unknown",
+        "optimizer_evidence_source": "unavailable",
+    }
+
+
 def load_config(path: Path, action: str) -> dict[str, Any]:
     config = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(config, dict):
@@ -290,6 +322,7 @@ def run_train(config: dict[str, Any]) -> None:
     shutil.copyfile(selected_source, selected_output)
     shutil.copyfile(terminal_source, terminal_output)
     shutil.copyfile(last_source, last_output)
+    optimizer_evidence = _optimizer_evidence(train, observed_optimizer)
     atomic_json(
         output / "selection.json",
         {
@@ -304,7 +337,7 @@ def run_train(config: dict[str, Any]) -> None:
             "terminal_resume_sha256": sha256_file(terminal_output),
             "last_checkpoint": str(last_output),
             "last_sha256": sha256_file(last_output),
-            "optimizer_observed_class": observed_optimizer.get("class", "unknown"),
+            **optimizer_evidence,
             "row": selected_row,
         },
     )

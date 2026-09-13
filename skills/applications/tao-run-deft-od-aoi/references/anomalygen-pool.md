@@ -29,10 +29,15 @@ routes:
   line_a:
     checkpoint: /models/line_a/adapter.pt
     recipe: /models/line_a/canonical_recipe.yaml
+    base_checkpoint: /models/Cosmos3-Nano
+    vae_path: /models/Wan2.2_VAE.pth
 ```
 
-Both files must exist before iteration preparation. The recipe must declare the
-types requested from that route.
+All four inputs must exist before iteration preparation. The recipe must declare
+the types requested from that route. `base_checkpoint` is the distributed DCP
+generation directory, not the Hugging Face Cosmos payload used by AMP;
+`vae_path` is the Wan2.2 VAE that the generation platform must also expose at
+the generator's canonical container path.
 
 ## Missing task weights
 
@@ -66,4 +71,6 @@ AnomalyGenNext training inside an iteration.
 `prepare_deft_od_aoi_synthesis.py` converts exact strict FN/annotation matches
 to a filtering YAML for `tao-prepare-anomalygennext-inputs`. The resulting
 generation plan is passed to `tao-generate-od-defects`. Only its validated
-binary COCO enters admission, under the cumulative synthetic fraction cap.
+binary COCO enters admission, under the cumulative synthetic fraction cap. The
+resolver preserves each route's generation base and VAE paths through the
+filtering config into that finalized generation plan.

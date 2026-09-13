@@ -29,7 +29,9 @@ def select(manifest_path: Path, selections: list[Path], output: Path) -> dict[st
     if manifest.get("phase") != "probe" or len(candidates) != 3 or len(selections) != 3:
         raise ValueError("YOLO probe selection requires one manifest and exactly three results")
     scored = []
-    for index, (candidate, path) in enumerate(zip(candidates, selections, strict=True)):
+    # Length equality is enforced above; avoid Python 3.10-only zip(strict=...)
+    # because cluster host-side controller Python may be 3.9.
+    for index, (candidate, path) in enumerate(zip(candidates, selections)):
         result = json.loads(path.read_text(encoding="utf-8"))
         if result.get("selection_metric") != METRIC:
             raise ValueError(f"probe {index} did not report {METRIC}")

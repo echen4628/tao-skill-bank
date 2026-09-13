@@ -8,8 +8,9 @@ validate contracts; model and data skills own their container actions.
 | Script | Purpose |
 |---|---|
 | `init_deft_od_aoi.py` | Validate normalized roles, freeze the policy, and initialize durable state. |
-| `prepare_deft_od_aoi_retrieval.py` | Build candidate crops/specs or per-iteration gap-query/mining specs. |
-| `admit_deft_od_aoi_coco.py` | Admit unique real/clean/synthetic sources into cumulative binary COCO. |
+| `prepare_deft_od_aoi_retrieval.py` | Build role-aware candidate/query crops and embedding specs. |
+| `route_deft_od_aoi_siglip.py` | Rank, deduplicate, apply the routing controller, and write the hash-bound admission preview. |
+| `assemble_deft_od_aoi_coco.py` | Assemble the previewed real/clean/synthetic manifest into cumulative binary COCO. |
 | `prepare_deft_od_aoi_measurement.py` | Emit KPI/test RT-DETR inference and loose/strict gap specs. |
 | `prepare_deft_od_aoi_training.py` | Emit direct main training or deterministic probe specs. |
 | `write_yolo_specs.py` | Emit fresh-base YOLO train plus separate KPI/test evaluation specs. |
@@ -26,7 +27,6 @@ validate contracts; model and data skills own their container actions.
 | YOLO training and evaluation | `tao-train-yolo` |
 | Loose and strict OD gap analysis | `tao-analyze-gaps-od-map` |
 | Candidate and query embedding | `tao-generate-image-embeddings` |
-| Unique-image mining | `tao-mine-od-images` |
 | AnomalyGenNext preparation and AMP | `tao-prepare-anomalygennext-inputs` |
 | Missing task-weight training | `tao-finetune-anomalygennext` |
 | Synthetic OD generation | `tao-generate-od-defects` |

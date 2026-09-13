@@ -76,6 +76,7 @@ class YoloSpecWriterTest(unittest.TestCase):
         manifest = run(self._args())
         self.assertEqual(manifest["ordering"], ["train"])
         self.assertEqual(manifest["actions"]["train"], "/durable/specs/train.yaml")
+        self.assertEqual(manifest["checkpoint_provenance"]["role"], "training_base")
         specs = build_specs(self._args())
         self.assertFalse(specs["train.yaml"]["train"]["resume"])
         self.assertEqual(specs["train.yaml"]["train"]["epochs"], 100)
@@ -99,6 +100,9 @@ class YoloSpecWriterTest(unittest.TestCase):
         )
         self.assertTrue(specs["test_evaluate.yaml"]["evaluation"]["report_only"])
         self.assertEqual(specs["kpi_evaluate.yaml"]["results_dir"], "{results_dir}")
+        manifest = run(args)
+        self.assertEqual(manifest["checkpoint_provenance"]["role"], "routing_seed")
+        self.assertEqual(manifest["checkpoint_provenance"]["source_iteration"], 0)
 
     def test_measurement_requires_and_uses_frozen_selected_checkpoint(self) -> None:
         args = self._args()
@@ -111,6 +115,9 @@ class YoloSpecWriterTest(unittest.TestCase):
         )
         self.assertFalse(specs["kpi_evaluate.yaml"]["evaluation"]["report_only"])
         self.assertTrue(specs["test_evaluate.yaml"]["evaluation"]["report_only"])
+        manifest = run(args)
+        self.assertEqual(manifest["checkpoint_provenance"]["role"], "iteration_selected")
+        self.assertEqual(manifest["checkpoint_provenance"]["source_iteration"], 1)
 
     def test_training_iteration_requires_train_coco(self) -> None:
         args = self._args()

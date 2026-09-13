@@ -57,7 +57,9 @@ def probes(manifest_path: Path, template_path: Path, statuses: list[Path],
     if len(manifest.get("probes", [])) != 3:
         raise ValueError("training manifest does not declare three probes")
     scored = []
-    for probe, status in zip(manifest["probes"], statuses, strict=True):
+    # Both collections are required to contain exactly three entries above.
+    # Keep this controller compatible with Python 3.9 cluster hosts.
+    for probe, status in zip(manifest["probes"], statuses):
         epoch, score = max(_metrics([status]), key=lambda row: (row[1], -row[0]))
         scored.append({**probe, "best_epoch": epoch, "best_kpi_mAP50": score})
     winner = max(scored, key=lambda row: (row["best_kpi_mAP50"], -row["index"]))

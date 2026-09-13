@@ -15,6 +15,12 @@ assert SPEC.loader
 SPEC.loader.exec_module(MODULE)
 
 
+def test_host_side_selectors_are_python39_compatible() -> None:
+    script_dir = SCRIPT.parent
+    for name in ("select_deft_od_aoi_training.py", "select_yolo_probes.py"):
+        assert "strict=True" not in (script_dir / name).read_text(encoding="utf-8")
+
+
 def _status(path: Path, epoch: int, score: float) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"epoch": epoch, "kpi": {"val_mAP50": score}}) + "\n")

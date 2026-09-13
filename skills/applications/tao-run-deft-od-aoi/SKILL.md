@@ -54,6 +54,10 @@ test, defective-real, and verified-clean roles; every COCO must declare only
 training. Every defective-real image needs at least one box, while clean images
 remain explicit zero-annotation COCO entries.
 
+When staging initialization under node-local scratch, pass the final durable
+contract directory with `--published-output-dir`; state must never record the
+temporary scratch path.
+
 ## Loop boundary
 
 The loop composes existing bank actions:
@@ -63,7 +67,7 @@ The loop composes existing bank actions:
 2. Two `tao-analyze-gaps-od-map` actions: loose confidence for FP routing and
    strict confidence for FN routing.
 3. `tao-generate-image-embeddings` with one frozen SigLIP encoder, followed by
-   `tao-mine-od-images` unique-neighbor matching against the real or clean role.
+   application-owned role-aware routing, deduplication, and admission preview.
 4. Application-owned admission and cumulative binary COCO assembly.
 5. Direct detector training from the same frozen base checkpoint, then KPI-only
    checkpoint selection. Test remains report-only. YOLO intentionally skips the
@@ -82,6 +86,7 @@ of loose/strict gap jobs:
 ```bash
 scripts/prepare_deft_od_aoi_retrieval.py candidates \
   --policy "$RESULTS/deft_od_aoi_policy.yaml" \
+  --published-output-dir "$RESULTS/candidates" \
   --output-dir "$RESULTS/candidates"
 
 scripts/prepare_deft_od_aoi_retrieval.py queries \
@@ -89,50 +94,62 @@ scripts/prepare_deft_od_aoi_retrieval.py queries \
   --strict-gaps "$ITER/strict/box_gaps.parquet" \
   --loose-gaps "$ITER/loose/box_gaps.parquet" \
   --iteration 1 --candidate-root "$RESULTS/candidates" \
+  --published-output-dir "$ITER/retrieval" \
   --output-dir "$ITER/retrieval"
 ```
 
-Run every emitted embedding spec through `tao-generate-image-embeddings`, then
-each enabled mining spec through `tao-mine-od-images`. Defective candidates
-and gap queries use contextual crops; clean candidates use the frozen grid.
-Strict FNs and loose near-miss FPs route to real data. Background-like loose
-FPs route only to the verified-clean role. Empty roles emit no mining action.
+Run the emitted embedding spec through `tao-generate-image-embeddings`, then run
+`route_deft_od_aoi_siglip.py` with the candidate and query embeddings. Defective
+candidates and gap queries use contextual crops; clean candidates use the
+frozen grid. Strict FNs and loose near-miss FPs route to real data.
+Background-like loose FPs route only to the verified-clean role. The router
+writes the routing report, ledgers, cumulative manifest, and a hash-bound
+admission preview; validate all of them before committing retrieval.
 
 ## Admission and cumulative COCO
 
-After both enabled miners complete, admit their selected candidate crops back
-to unique source images and publish the next cumulative dataset:
+After routing completes, publish the previewed cumulative dataset:
 
 ```bash
-scripts/admit_deft_od_aoi_coco.py \
+scripts/assemble_deft_od_aoi_coco.py \
   --policy "$RESULTS/deft_od_aoi_policy.yaml" \
-  --candidate-root "$RESULTS/candidates" \
-  --retrieval-root "$ITER/retrieval" \
-  --previous-coco "$PREVIOUS/train.json" \
-  --output-dir "$ITER/training_data"
+  --route-manifest "$ITER/retrieval/route/mined_manifest.json" \
+  --current-routing-report "$ITER/retrieval/route/routing_report.json" \
+  --previous-assembled-coco "$PREVIOUS/train.json" \
+  --synthetic-source "$ITER/synthesis/pseudo_labels/coco_annotations_od_defect.json::$ITER/synthesis/raw/reconstructed_image" \
+  --output-coco "$ITER/training_data/train.json" \
+  --output-images-dir "$ITER/training_data/images" \
+  --link-mode symlink
 ```
 
-Omit `--previous-coco` only for iteration 1. The helper recomputes maximum
-cosine similarity from the frozen candidate/query embeddings, applies the
-minimum similarity, deduplicates crop hits to source images, excludes prior
-sources, and caps cumulative clean negatives against cumulative real defects.
+Omit `--previous-assembled-coco` only for iteration 1 and omit
+`--synthetic-source` until generation has completed. Routing has already applied the
+strict/near/clean controller, source deduplication, valid-box checks, prior
+ledgers, and cumulative clean bound. Assembly verifies the frozen manifest,
+excludes prior sources, deterministically limits newly generated images to the
+frozen cumulative synthetic fraction, and publishes the previewed records.
 It retains every prior image and box and emits one binary COCO with explicit
-zero-annotation clean images. Use `--link-mode hardlink` only when source and
-output share a filesystem; portable staging should keep the copy default.
+zero-annotation clean images. Use `--link-mode symlink` only when durable source
+paths remain available; portable staging should use `copy`.
 
 ## Measurement specs
 
-For baseline use the frozen base checkpoint; after training use the selected
-iteration checkpoint. Prepare both inference specs and the two gap-analysis
-specs together:
+In `true_fresh` mode, baseline routing uses the public base checkpoint. After
+iteration *n*, its selected checkpoint routes iteration *n+1*, while every
+probe and main training job still initializes from the public base. Prepare
+both inference specs and the two gap-analysis specs together:
 
 ```bash
 scripts/prepare_deft_od_aoi_measurement.py \
   --policy "$RESULTS/deft_od_aoi_policy.yaml" \
   --checkpoint "$CHECKPOINT" \
+  --checkpoint-role "$CHECKPOINT_ROLE" \
   --kpi-predictions "$MEASURE/kpi/inference/labels" \
   --results-root "$MEASURE" --output-dir "$MEASURE/specs"
 ```
+
+When the specs are first written under node-local scratch, also pass their
+final durable directory with `--published-output-dir`.
 
 For RT-DETR, submit KPI/test inference through `tao-train-rtdetr`. For YOLO,
 generate the baseline or post-training evaluate specs with
@@ -210,15 +227,22 @@ strict gap analysis, normalize exact FN/annotation matches:
 scripts/prepare_deft_od_aoi_synthesis.py \
   --policy "$RESULTS/deft_od_aoi_policy.yaml" \
   --strict-gaps "$MEASURE/gap_strict/box_gaps.parquet" \
+  --synthetic-plan "$ITER/retrieval/synthetic_plan.json" \
+  --synthetic-plan-sha256 "$SYNTHETIC_PLAN_SHA256" \
   --output-dir "$ITER/synthesis_request"
 ```
 
-Pass the emitted filtering YAML through `tao-prepare-anomalygennext-inputs`,
-then its finalized generation plan through `tao-generate-od-defects`. Commit
-`iteration_synthesis` before training. Re-run admission with the generated
-native COCO and image root; synthetic categories are folded to `defect`, and
-the frozen cumulative fraction cap is applied against admitted real defects.
-Boxes alone never substitute for the required pixel mask.
+The SHA must be the hash recorded when `iteration_retrieval` committed that
+plan. Preparation deterministically freezes at most `requested_images // 2`
+false-negative boxes per anomaly type, tries three clean-image candidates per
+box, and retains one successful pair (two mask branches). Pass the emitted
+filtering YAML through `tao-prepare-anomalygennext-inputs`, then its finalized
+generation plan through `tao-generate-od-defects`. Commit
+`iteration_synthesis` only with the plan reconciliation artifact. Re-run
+admission with the generated native COCO and image root; synthetic categories
+are folded to `defect`, and the frozen cumulative fraction cap is applied
+against admitted real defects. Boxes alone never substitute for the required
+pixel mask.
 
 ## Missing AnomalyGenNext task weights
 
@@ -227,6 +251,12 @@ containing `dataset_root`, frozen `validation_testcase`, Cosmos3-Nano
 `base_checkpoint`, `vae_path`, `nn_backbone`, future `result_handoff`, and
 optional user `recipe_template`/`defect_spec`. These are AnomalyGenNext inputs;
 the application policy is not an upstream training recipe.
+
+The resolver retains `base_checkpoint` and `vae_path` after task-weight
+resolution and writes them into the prepared generation plan. The base is the
+distributed DCP generation checkpoint, distinct from the Hugging Face Cosmos
+payload selected by `amp_model_id`; the platform must expose the Wan2.2 VAE at
+the generator's canonical container path.
 
 Run `resolve_deft_od_aoi_synthesis.py` before the candidate cache. If a handoff
 is absent, it emits `finetune_requests.json`; execute each request through

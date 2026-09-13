@@ -3,10 +3,14 @@
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
+import yaml
+from PIL import Image
 
 
 SCRIPT = Path(__file__).parents[1] / "run_anomalygennext_amp.py"
@@ -34,11 +38,19 @@ def inputs(root: Path) -> dict:
          "dataset_id": "d", "pool_key": "texture_1",
          "anomaly_type": "texture_1+crack", "od_category": "defect"},
     ]).to_parquet(root / "manifests" / "selected_fn_queries.parquet")
-    pd.DataFrame([
-        {"fn_id": fn, "branch": branch, "mask_path": f"/masks/{fn}-{branch}.png"}
+    mask_rows = []
+    for index, (fn, branch) in enumerate(
+        (fn, branch)
         for fn in ("fn-1", "fn-2")
         for branch in sorted(MODULE.BRANCHES)
-    ]).to_parquet(root / "manifests" / "mask_selection.parquet")
+    ):
+        path = root / "masks" / f"{fn}-{branch}.png"
+        values = np.zeros((32, 32), dtype=np.uint8)
+        values[4 + index:12 + index, 5:15] = 255
+        path.parent.mkdir(parents=True, exist_ok=True)
+        Image.fromarray(values).save(path)
+        mask_rows.append({"fn_id": fn, "branch": branch, "mask_path": str(path)})
+    pd.DataFrame(mask_rows).to_parquet(root / "manifests" / "mask_selection.parquet")
     return {"retrieval": {"metric": "cosine", "candidate_topn": 2,
                            "min_similarity": -1.0,
                            "prior_clean_exclusion_manifest": ""}}
@@ -61,3 +73,44 @@ def test_plan_rejects_zero_norm_embeddings(tmp_path: Path) -> None:
     frame.to_parquet(tmp_path / "embeddings" / "fn_embeddings.parquet")
     with pytest.raises(ValueError, match="zero-norm"):
         MODULE.plan(tmp_path, config)
+
+
+def test_plan_rejects_nonbinary_amp_mask(tmp_path: Path) -> None:
+    config = inputs(tmp_path)
+    masks = pd.read_parquet(tmp_path / "manifests" / "mask_selection.parquet")
+    bad = Path(masks.iloc[0].mask_path)
+    values = np.zeros((32, 32), dtype=np.uint8)
+    values[4:12, 5:15] = 3
+    Image.fromarray(values).save(bad)
+    with pytest.raises(ValueError, match="exactly binary values"):
+        MODULE.plan(tmp_path, config)
+
+
+def test_run_keeps_native_logs_off_machine_readable_stdout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = inputs(tmp_path)
+    config.update({
+        "defect_spec": str(tmp_path / "defect.jsonl"),
+        "retrieval": {"metric": "cosine", "candidate_topn": 1,
+                      "min_similarity": 0.0, "prior_clean_exclusion_manifest": ""},
+        "amp": {"model_id": "nvidia/Cosmos3-Nano", "seed": 43},
+    })
+    frozen = tmp_path / "prepared_anomalygennext_inputs" / "filtering_config.yaml"
+    frozen.parent.mkdir()
+    frozen.write_text(yaml.safe_dump(config, sort_keys=False))
+    config_path = tmp_path / "config.yaml"
+    config_path.write_bytes(frozen.read_bytes())
+
+    def fake_run(command: list[str], *, check: bool, stdout: object) -> None:
+        assert check is True
+        assert stdout is sys.stderr
+        print("native placement progress", file=stdout)
+        (tmp_path / "amp" / "testcase.jsonl").write_text("{}\n")
+
+    monkeypatch.setattr(MODULE.subprocess, "run", fake_run)
+    report = MODULE.run(config_path, tmp_path)
+    captured = capsys.readouterr()
+    assert report["testcase"].endswith("amp/testcase.jsonl")
+    assert captured.out == ""
+    assert "native placement progress" in captured.err

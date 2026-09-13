@@ -16,6 +16,7 @@ import yaml
 
 FINETUNE_INPUTS = ("dataset_root", "validation_testcase", "base_checkpoint",
                    "vae_path", "nn_backbone", "result_handoff")
+GENERATION_INPUTS = ("base_checkpoint", "vae_path")
 
 
 def _sha(path: Path) -> str:
@@ -24,6 +25,22 @@ def _sha(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _generation_runtime(name: str, route: dict[str, Any]) -> dict[str, str]:
+    source = route if all(str(route.get(key) or "").strip() for key in GENERATION_INPUTS) else (
+        route.get("finetune") or {}
+    )
+    missing = [key for key in GENERATION_INPUTS if not str(source.get(key) or "").strip()]
+    if missing:
+        raise ValueError(f"route {name} lacks generation runtime fields: {missing}")
+    base = Path(str(source["base_checkpoint"])).expanduser().resolve()
+    vae = Path(str(source["vae_path"])).expanduser().resolve()
+    if not base.is_dir() or not vae.is_file():
+        raise ValueError(
+            f"route {name} generation runtime is missing: base_checkpoint={base}, vae_path={vae}"
+        )
+    return {"base_checkpoint": str(base), "vae_path": str(vae)}
 
 
 def resolve(policy_path: Path, output: Path) -> dict[str, Any]:
@@ -38,7 +55,8 @@ def resolve(policy_path: Path, output: Path) -> dict[str, Any]:
     for name, route in synthesis.get("routes", {}).items():
         checkpoint, recipe = Path(str(route.get("checkpoint") or "")), Path(str(route.get("recipe") or ""))
         if checkpoint.is_file() and recipe.is_file():
-            resolved[name] = {"checkpoint": str(checkpoint.resolve()), "recipe": str(recipe.resolve())}
+            resolved[name] = {"checkpoint": str(checkpoint.resolve()), "recipe": str(recipe.resolve()),
+                              **_generation_runtime(name, route)}
             continue
         finetune = route.get("finetune") or {}
         missing = [key for key in FINETUNE_INPUTS if not str(finetune.get(key) or "").strip()]
@@ -69,6 +87,7 @@ def resolve(policy_path: Path, output: Path) -> dict[str, Any]:
         if value.get("dataset_name") != name or not value.get("anomaly_types"):
             raise ValueError(f"route {name} fine-tune handoff identity does not match")
         resolved[name] = {"checkpoint": str(checkpoint.resolve()), "recipe": str(recipe.resolve()),
+                          **_generation_runtime(name, route),
                           "training_handoff": str(handoff.resolve())}
     if requests:
         report = {"status": "NEEDS_TRAINING", "requests": requests,

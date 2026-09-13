@@ -17,6 +17,15 @@ Also publish `last.pt`, the complete curve, hashes, and the selected row in
 restart the DEFT iteration or initialize the next iteration from recovered
 weights.
 
+Optimizer evidence in `selection.json` is provenance-aware. A single-process
+runtime callback records the concrete class. Ultralytics does not propagate
+model-local callbacks into its multi-GPU DDP child, so a fresh run with an
+explicit non-`auto` optimizer records that deterministic effective name with
+`optimizer_evidence_source: explicit_fresh_config` while leaving
+`optimizer_observed_class` as `unknown`. Consumers must gate the effective name
+and evidence source, not require a runtime callback for DDP. Auto-selected and
+resumed optimizers remain `unknown` unless the runtime callback observes them.
+
 Require a contiguous one-based epoch sequence. When a restored trainer repeats
 rows already present in the durable prior curve, keep the prior rows as the
 authoritative metrics for those completed epochs; new rows begin after the

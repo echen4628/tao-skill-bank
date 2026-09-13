@@ -6,6 +6,7 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
 import yaml
 
 
@@ -52,4 +53,21 @@ def test_resolution_requests_training_then_accepts_hash_bound_handoff(tmp_path: 
     resolved = MODULE.resolve(policy, tmp_path / "resolved")
     assert resolved["status"] == "COMPLETE"
     value = yaml.safe_load(Path(resolved["resolved_policy"]).read_text())
-    assert value["synthesis"]["routes"]["route"]["checkpoint"] == str(checkpoint.resolve())
+    route = value["synthesis"]["routes"]["route"]
+    assert route["checkpoint"] == str(checkpoint.resolve())
+    assert route["base_checkpoint"] == str((tmp_path / "base").resolve())
+    assert route["vae_path"] == str((tmp_path / "vae.pth").resolve())
+
+
+def test_ready_route_requires_generation_runtime_assets(tmp_path: Path) -> None:
+    checkpoint, recipe, defect = tmp_path / "adapter.pt", tmp_path / "recipe.yaml", tmp_path / "defect.jsonl"
+    checkpoint.write_bytes(b"adapter")
+    recipe.write_text("anomaly_types: [[texture, defect]]\n")
+    defect.write_text("{}\n")
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(yaml.safe_dump({"synthesis": {"enabled": True,
+        "defect_spec": str(defect), "routes": {"route": {
+            "checkpoint": str(checkpoint), "recipe": str(recipe)}}}}))
+
+    with pytest.raises(ValueError, match="generation runtime fields"):
+        MODULE.resolve(policy, tmp_path / "resolved")

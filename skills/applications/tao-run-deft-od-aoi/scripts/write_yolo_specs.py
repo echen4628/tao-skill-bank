@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -47,6 +48,14 @@ def _absolute_dir(value: str) -> str:
     if not path.is_dir():
         raise FileNotFoundError(path)
     return str(path)
+
+
+def _sha(path: str) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _identity(value: str) -> Path:
@@ -102,6 +111,12 @@ def build_specs(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
     test_coco = _absolute_file(str((sources.get("test") or {}).get("coco") or ""))
     test_images = _absolute_dir(str((sources.get("test") or {}).get("images") or ""))
     checkpoint = _absolute_file(str(policy.get("base_checkpoint") or ""))
+    routing_seed = _absolute_file(
+        str(policy.get("routing_seed_checkpoint") or policy.get("base_checkpoint") or "")
+    )
+    if (policy.get("reproduction_mode") == "true_fresh"
+            and _sha(routing_seed) != _sha(checkpoint)):
+        raise ValueError("true_fresh routing seed must match the training base checkpoint")
     yolo = policy.get("yolo") or {}
     probes = yolo.get("probes") or {}
     training = yolo.get("training") or {}
@@ -172,7 +187,7 @@ def build_specs(args: argparse.Namespace) -> dict[str, dict[str, Any]]:
     selected_checkpoint = (
         _absolute_file(args.selected_checkpoint)
         if args.phase == "measure"
-        else checkpoint
+        else routing_seed if args.phase == "baseline" else checkpoint
     )
 
     def evaluation_spec(
@@ -262,6 +277,18 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "actions": actions,
         "ordering": ordering,
         "test_is_report_only": True,
+        "checkpoint_provenance": {
+            "role": (
+                "routing_seed" if args.phase == "baseline"
+                else "iteration_selected" if args.phase == "measure"
+                else "training_base"
+            ),
+            "path": (
+                next(iter(specs.values()))["model"]["checkpoint"]
+            ),
+            "sha256": _sha(next(iter(specs.values()))["model"]["checkpoint"]),
+            "source_iteration": (args.iteration if args.phase == "measure" else 0),
+        },
         "probe_selection": winner,
         "probe_candidates": (probes.get("candidates") if args.phase == "probe" else None),
         "probe_seed": (

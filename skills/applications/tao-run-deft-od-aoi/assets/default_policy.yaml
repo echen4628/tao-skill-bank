@@ -1,7 +1,9 @@
 class_name: defect
 max_iterations: null
 platform: null
+reproduction_mode: true_fresh
 base_checkpoint: null
+routing_seed_checkpoint: null
 model:
   backend: rtdetr
   architecture: rtdetr
@@ -18,19 +20,35 @@ gap:
   background_iou_upper: 0.05
   near_miss_iou_upper: 0.5
 retrieval:
+  mode: siglip_only
   model: SigLIP
   model_path: google/siglip-base-patch16-224
   defect_context_scale: 1.5
   clean_grids: [1, 2]
   minimum_similarity: -1.0
   candidate_overfetch: 15
+  output_size: 224
+  audit_top_k_per_query: 20
 routing:
+  adaptive_conversion_prior: 0.33
   real_mine_factor_min: 1
   real_mine_factor_max: 6
   near_miss_real_factor: 2
-  near_miss_real_cap: 20
+  near_miss_real_cap_per_pocket: 20
   clean_factor: 2
   clean_cumulative_cap_per_real: 1.0
+  uniform_mine: {mode: constant, per_pocket: 0}
+admission:
+  duplicate_global_cosine: 0.995
+  duplicate_defect_cosine: 0.985
+  duplicate_position_delta: 0.04
+  clean_duplicate_global_cosine: 0.999
+  clean_cluster_cosine: 0.97
+  clean_cluster_minimum_cap: 2
+  clean_cluster_quota_divisor: 4
+  minimum_box_area_px: 64
+  maximum_box_aspect: 25.0
+  duplicate_gt_iou: 0.9
 training:
   num_gpus: 4
   batch_size: 8
@@ -99,7 +117,7 @@ synthesis:
   pool_dataset_root: null
   defect_spec: null
   routes: {}
-  max_neighbors_per_fn: 5
+  max_neighbors_per_fn: 1
   min_similarity: 0.9
   cumulative_fraction_of_real_defects: 0.25
   amp_model_id: nvidia/Cosmos3-Nano

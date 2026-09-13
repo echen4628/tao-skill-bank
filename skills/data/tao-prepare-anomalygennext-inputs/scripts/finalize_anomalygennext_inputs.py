@@ -40,6 +40,27 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _frozen_plan(config: dict[str, Any]) -> tuple[dict[str, int], dict[str, str]]:
+    reference = config.get("synthetic_plan") or {}
+    counts = reference.get("counts")
+    path, sha256 = str(reference.get("path") or ""), str(reference.get("sha256") or "")
+    if not isinstance(counts, dict) or not counts or not path or len(sha256) != 64:
+        raise ValueError("filtering config lacks a hash-bound synthetic plan")
+    plan_path = Path(path).expanduser().resolve()
+    if not plan_path.is_file() or _sha256(plan_path) != sha256:
+        raise ValueError("filtering config synthetic plan path/hash is stale")
+    frozen = json.loads(plan_path.read_text(encoding="utf-8"))
+    if frozen != counts:
+        raise ValueError("filtering config synthetic plan counts differ from the hash-bound file")
+    plan: dict[str, int] = {}
+    for key, value in counts.items():
+        if (not str(key).strip() or isinstance(value, bool) or not isinstance(value, int)
+                or value < 0):
+            raise ValueError(f"invalid frozen synthetic plan entry: {key!r}={value!r}")
+        plan[str(key)] = value
+    return dict(sorted(plan.items())), {"path": str(plan_path), "sha256": sha256}
+
+
 def _amp_index(path: Path) -> dict[tuple[str, str], dict[str, Any]]:
     result = {}
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -70,6 +91,7 @@ def _validate_mask(mask_path: Path, image_path: Path) -> str:
 def finalize(root: Path) -> dict[str, Any]:
     prepared = root / "prepared_anomalygennext_inputs"
     config = yaml.safe_load((prepared / "filtering_config.yaml").read_text())
+    plan, plan_reference = _frozen_plan(config)
     candidates = pd.read_parquet(root / "manifests" / "knn_candidates.parquet")
     masks = pd.read_parquet(root / "manifests" / "mask_selection.parquet")
     amp = _amp_index(root / "amp" / "testcase.jsonl")
@@ -157,10 +179,15 @@ def finalize(root: Path) -> dict[str, Any]:
         plans.append({"dataset_id": dataset, "anomaly_types": types,
                       "testcase": str(testcase), "provenance": str(provenance_path),
                       "checkpoint": str(mapping["checkpoint"]), "recipe": str(mapping["recipe"]),
+                      "base_checkpoint": str(mapping["base_checkpoint"]),
+                      "vae_checkpoint": str(mapping["vae_checkpoint"]),
                       "real_root": str(config["pool_dataset_root"]),
                       "requested_rows": len(generator[dataset])})
         unified.extend({**proof, "checkpoint": str(mapping["checkpoint"]),
-                        "recipe": str(mapping["recipe"]), "generator_input": request}
+                        "recipe": str(mapping["recipe"]),
+                        "base_checkpoint": str(mapping["base_checkpoint"]),
+                        "vae_checkpoint": str(mapping["vae_checkpoint"]),
+                        "generator_input": request}
                        for proof, request in zip(provenance[dataset], generator[dataset], strict=True))
         artifacts.extend([testcase, provenance_path])
     if not unified:
@@ -169,8 +196,34 @@ def finalize(root: Path) -> dict[str, Any]:
     plan_path = prepared / "anomalygen_next_generation_plan.json"
     _jsonl(unified_path, unified)
     _json(plan_path, plans)
-    artifacts.extend([unified_path, plan_path, prepared / "filtering_config.yaml",
-                      prepared / "input_contract.json"])
+    actual_by_type = Counter(str(row["anomaly_type"]) for row in unified)
+    unexpected = sorted(set(actual_by_type) - set(plan))
+    if unexpected:
+        raise ValueError(f"generator rows contain types absent from synthetic plan: {unexpected}")
+    per_type = {}
+    for anomaly_type, requested in plan.items():
+        actual = int(actual_by_type.get(anomaly_type, 0))
+        if actual > requested:
+            raise ValueError(
+                f"generator rows exceed synthetic plan for {anomaly_type}: {actual}>{requested}"
+            )
+        per_type[anomaly_type] = {
+            "requested_images": requested,
+            "generator_rows": actual,
+            "explicit_shortfall": requested - actual,
+        }
+    reconciliation = {
+        "status": "COMPLETE",
+        "synthetic_plan": plan_reference,
+        "requested_total": sum(plan.values()),
+        "generator_row_count": len(unified),
+        "explicit_shortfall_total": sum(plan.values()) - len(unified),
+        "per_type": per_type,
+    }
+    reconciliation_path = prepared / "synthesis_plan_reconciliation.json"
+    _json(reconciliation_path, reconciliation)
+    artifacts.extend([unified_path, plan_path, reconciliation_path,
+                      prepared / "filtering_config.yaml", prepared / "input_contract.json"])
     artifacts.extend(sorted((prepared / "aligned_masks").rglob("*.png")))
     manifest = {
         "schema_version": 2, "phase": "prepared_anomalygennext_inputs", "status": "COMPLETE",
@@ -180,6 +233,7 @@ def finalize(root: Path) -> dict[str, Any]:
         "artifacts": [{"path": str(path), "sha256": _sha256(path), "bytes": path.stat().st_size}
                       for path in artifacts],
         "skip_counts": dict(Counter(status.selection_reason)), "generation_ready": True,
+        "synthesis_plan_reconciliation": reconciliation,
         "training_pool_mutated": False,
     }
     _json(prepared / "prepared_inputs_manifest.json", manifest)
