@@ -62,6 +62,28 @@ def test_later_iteration_emits_three_deterministic_probe_specs(tmp_path: Path) -
     assert all(spec["train"]["num_epochs"] == 10 for spec in specs)
 
 
+def test_probe_start_iteration_can_enable_distinct_iteration_one_probes(
+        tmp_path: Path) -> None:
+    policy, coco, images = _fixture(tmp_path, 1, 20)
+    value = yaml.safe_load(policy.read_text())
+    value["training"]["probe_start_iteration"] = 1
+    policy.write_text(yaml.safe_dump(value))
+
+    report = MODULE.prepare(policy, 1, coco, images, tmp_path / "runs",
+                            tmp_path / "specs", None, None)
+
+    assert report["probes_enabled"] is True
+    assert report["probe_start_iteration"] == 1
+    assert report["growth_basis"] == "cold_start"
+    assert len(report["probes"]) == 3
+    learning_rates = {
+        yaml.safe_load((tmp_path / f"specs/probe{index}.yaml").read_text())["train"]["optim"]["lr"]
+        for index in range(3)
+    }
+    assert len(learning_rates) == 3
+    assert not (tmp_path / "specs/train.yaml").exists()
+
+
 def test_yolo_is_routed_to_backend_specific_spec_writer(tmp_path: Path) -> None:
     policy, coco, images = _fixture(tmp_path, 1, 20)
     value = yaml.safe_load(policy.read_text())

@@ -81,10 +81,15 @@ def prepare(policy_path: Path, iteration: int, train_coco: Path, train_images: P
     epochs = _epochs(training, iteration, size)
     output.mkdir(parents=True)
     template = _base(policy, train_coco.resolve(), train_images.resolve(), results / "main", epochs)
-    probes = bool(training["probes_enabled"]) and iteration >= 3
+    probe_start = int(training.get("probe_start_iteration", 3))
+    if probe_start < 1:
+        raise ValueError("training.probe_start_iteration must be positive")
+    probes = bool(training["probes_enabled"]) and iteration >= probe_start
     manifest: dict[str, Any] = {"status": "COMPLETE", "iteration": iteration,
                                 "train_size": size, "planned_epochs": epochs,
-                                "probes_enabled": probes, "probes": []}
+                                "probes_enabled": probes,
+                                "probe_start_iteration": probe_start,
+                                "probes": []}
     _write(output / "main_template.yaml", template)
     if not probes:
         _write(output / "train.yaml", template)
@@ -102,7 +107,11 @@ def prepare(policy_path: Path, iteration: int, train_coco: Path, train_images: P
                 raise ValueError("incumbent must be a JSON mapping")
             incumbent.update(value)
         scaled = dict(incumbent)
-        if growth > float(training["growth_high"]):
+        # A first-iteration probe has no preceding training set. Treat that
+        # cold start as high growth so the scaled candidate is meaningfully
+        # distinct from the incumbent instead of running a duplicate probe.
+        cold_start = iteration == 1 and not history
+        if cold_start or growth > float(training["growth_high"]):
             scaled["train.optim.lr"] *= float(training["high_growth_lr_factor"])
         elif growth < float(training["growth_low"]):
             scaled["train.optim.lr"] *= float(training["low_growth_lr_factor"])
@@ -123,6 +132,7 @@ def prepare(policy_path: Path, iteration: int, train_coco: Path, train_images: P
             _write(output / f"probe{index}.yaml", spec)
             manifest["probes"].append({"index": index, "name": name, "overrides": overrides})
         manifest["growth"] = growth
+        manifest["growth_basis"] = "cold_start" if cold_start else "history"
     (output / "training_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     return manifest
 

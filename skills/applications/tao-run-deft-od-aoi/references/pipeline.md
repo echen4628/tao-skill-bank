@@ -60,8 +60,9 @@ Re-run admission with the generated binary COCO and image root. Commit
 
 ## 6. Train and select
 
-For RT-DETR, run `prepare_deft_od_aoi_training.py`. Iterations 1–2 emit direct
-`train.yaml`. Later iterations may emit three probe specs. Submit probes,
+For RT-DETR, run `prepare_deft_od_aoi_training.py`. Before the frozen
+`training.probe_start_iteration`, iterations emit direct `train.yaml`; at and
+after that iteration they may emit three probe specs. Submit probes,
 then run `select_deft_od_aoi_training.py probes` to materialize the selected
 main spec. Submit main training from the frozen base checkpoint.
 

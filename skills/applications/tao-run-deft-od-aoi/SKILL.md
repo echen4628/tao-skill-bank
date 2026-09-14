@@ -174,7 +174,9 @@ scripts/prepare_deft_od_aoi_training.py \
 
 Invoke the RT-DETR leaf as direct training with `automl_policy: off`; the AOI
 application already owns its frozen probe policy. Iterations 1–2 use 36 epochs.
-Later iterations use the clipped size-adaptive budget. When probes are enabled,
+Probe eligibility starts at frozen `training.probe_start_iteration` (default 3),
+which may be lowered to 1 or 2. Later iterations use the clipped size-adaptive
+budget. When probes are enabled,
 the helper emits independent incumbent, data-growth-scaled, and deterministic
 jitter specs, all initialized from the same frozen base checkpoint. Run all
 three before selecting and materializing `train.yaml`; never initialize the

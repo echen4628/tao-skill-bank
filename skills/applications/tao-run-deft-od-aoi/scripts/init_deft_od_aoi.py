@@ -88,14 +88,27 @@ def _role(name: str, value: dict[str, Any]) -> dict[str, Any]:
 
 def _routing_policy(policy: dict[str, Any]) -> dict[str, Any]:
     """Translate the public application policy into the proven routing contract."""
+    backend = str((policy.get("model") or {}).get("backend") or "rtdetr")
+    rtdetr_training = policy.get("training") or {}
+    yolo_probes = (policy.get("yolo") or {}).get("probes") or {}
+    probes_enabled = (bool(rtdetr_training.get("probes_enabled"))
+                      if backend == "rtdetr" else bool(yolo_probes.get("enabled")))
     routed = build_policy(
         max_iterations=int(policy["max_iterations"]),
         synthetic_enabled=bool((policy.get("synthesis") or {}).get("enabled")),
-        probes_enabled=bool((policy.get("yolo") or {}).get("probes", {}).get("enabled")),
+        probes_enabled=probes_enabled,
         model_soup_enabled=False,
         training_workers=int((policy.get("training") or {}).get("workers", 4)),
         inference_workers=int((policy.get("yolo") or {}).get("evaluation", {}).get("workers", 8)),
     )
+    if backend == "rtdetr":
+        routed["training"]["probe_start_iteration"] = int(
+            rtdetr_training.get("probe_start_iteration", 3)
+        )
+    else:
+        routed["training"]["probe_start_iteration"] = int(
+            yolo_probes.get("start_iteration", 1)
+        )
     routed["gap"].update({
         key: policy["gap"][key]
         for key in ("loose_confidence", "strict_confidence", "match_iou",
@@ -177,6 +190,12 @@ def initialize(
                 for key in ("lr0", "lrf", "weight_decay"):
                     if float(candidate.get(key, -1)) < 0:
                         raise ValueError(f"yolo probe candidate {key} must be non-negative")
+    else:
+        training = policy.get("training") or {}
+        if not isinstance(training.get("probes_enabled"), bool):
+            raise ValueError("training.probes_enabled must be boolean")
+        if int(training.get("probe_start_iteration", 0)) < 1:
+            raise ValueError("training.probe_start_iteration must be positive")
     role_reports = {name: _role(name, policy["sources"][name]) for name in ROLES}
     owners: dict[str, str] = {}
     for name, report in role_reports.items():

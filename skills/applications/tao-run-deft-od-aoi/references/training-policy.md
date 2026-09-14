@@ -34,14 +34,20 @@ publishes only the declared compact artifacts.
 
 ## Epoch policy
 
-Iterations 1–2 skip probes and train for 36 epochs.
+The default `training.probe_start_iteration: 3` makes iterations 1–2 skip
+probes and train for 36 epochs. A frozen run policy may lower the start to 1
+or 2; this is a policy choice, not an RT-DETR implementation restriction.
 
-From iteration 3 onward, when probes are enabled, run three independent
+From the configured start iteration onward, when probes are enabled, run three independent
 ten-epoch probes from the frozen base:
 
 1. incumbent learning rates;
 2. a data-growth-scaled candidate;
 3. deterministic jitter using seed `4000 + iteration`.
+
+When probes start at iteration 1, there is no prior training-set size for the
+growth candidate. Treat that cold start as high growth so all three probes are
+distinct; iteration 2 and later use the recorded preceding training-set size.
 
 All three must complete before selection. The main budget is:
 

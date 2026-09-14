@@ -63,6 +63,21 @@ def test_initialize_freezes_real_only_disjoint_contract(tmp_path: Path) -> None:
     assert Path(state["routing_policy"]).is_file()
 
 
+def test_initialize_preserves_rtdetr_probe_start_iteration(tmp_path: Path) -> None:
+    config = _config(tmp_path)
+    value = yaml.safe_load(config.read_text())
+    value["training"] = {"probe_start_iteration": 1}
+    config.write_text(yaml.safe_dump(value))
+
+    state = MODULE.initialize(config, tmp_path / "results")
+
+    frozen = yaml.safe_load(Path(state["policy"]).read_text())
+    routed = json.loads(Path(state["routing_policy"]).read_text())
+    assert frozen["training"]["probe_start_iteration"] == 1
+    assert routed["training"]["probe_start_iteration"] == 1
+    assert routed["training"]["probes_enabled"] is True
+
+
 def test_initialize_records_durable_paths_for_scratch_copyback(tmp_path: Path) -> None:
     scratch = tmp_path / "scratch" / "contract"
     durable = tmp_path / "durable" / "contract"
