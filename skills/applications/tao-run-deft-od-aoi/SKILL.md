@@ -238,6 +238,10 @@ scripts/prepare_deft_od_aoi_synthesis.py \
   --output-dir "$ITER/synthesis_request"
 ```
 
+When preparing under node-local scratch, also pass the final durable directory
+with `--published-output-dir` so the emitted filtering config never records a
+scratch path.
+
 The SHA must be the hash recorded when `iteration_retrieval` committed that
 plan. Preparation deterministically freezes at most `requested_images // 2`
 false-negative boxes per anomaly type, tries three clean-image candidates per

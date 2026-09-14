@@ -78,11 +78,18 @@ def test_synthesis_normalizes_exact_kpi_false_negative(tmp_path: Path) -> None:
                   {"image_id": 8, "filepath": str(no_route_image), "gap_type": "FN",
                    "bbox": [1, 2, 4, 6], "class": "defect"}]).to_parquet(gaps)
     plan, plan_sha = _plan(tmp_path, {"texture+crack": 2})
-    report = MODULE.prepare(policy, gaps, plan, plan_sha, tmp_path / "out")
+    published = tmp_path / "durable"
+    report = MODULE.prepare(
+        policy, gaps, plan, plan_sha, tmp_path / "out", published
+    )
     assert report["fn_count"] == 1
     normalized = pd.read_parquet(tmp_path / "out/normalized_fn_gaps.parquet").iloc[0]
     assert normalized.anomaly_type == "texture+crack"
     config = yaml.safe_load((tmp_path / "out/anomalygen_filtering.yaml").read_text())
+    assert config["gap_parquet"] == str(
+        published / "normalized_fn_gaps.parquet"
+    )
+    assert report["config"] == str(published / "anomalygen_filtering.yaml")
     assert config["datasets"]["route"]["checkpoint"] == str(checkpoint.resolve())
     assert config["datasets"]["route"]["base_checkpoint"] == str(
         (tmp_path / "generation-base").resolve()

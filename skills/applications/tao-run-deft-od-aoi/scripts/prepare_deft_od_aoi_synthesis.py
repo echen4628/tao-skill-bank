@@ -102,10 +102,12 @@ def prepare(
     synthetic_plan_path: Path,
     synthetic_plan_sha256: str,
     output: Path,
+    published_output: Path | None = None,
 ) -> dict[str, Any]:
     if output.exists():
         raise FileExistsError(output)
     policy = yaml.safe_load(policy_path.read_text())
+    published = (published_output or output).expanduser().resolve()
     plan, plan_sha256 = _synthetic_plan(synthetic_plan_path, synthetic_plan_sha256)
     synthesis = policy["synthesis"]
     if not synthesis.get("enabled"):
@@ -201,7 +203,8 @@ def prepare(
     output.mkdir(parents=True)
     normalized = output / "normalized_fn_gaps.parquet"
     selected.to_parquet(normalized, index=False)
-    config = {"source_tag": "deft_od_aoi", "gap_parquet": str(normalized),
+    config = {"source_tag": "deft_od_aoi",
+              "gap_parquet": str(published / normalized.name),
               "pool_dataset_root": str(pool.resolve()), "defect_spec": str(defect_spec.resolve()),
               "datasets": {name: {"checkpoint": str(Path(route["checkpoint"]).resolve()),
                                     "recipe": str(Path(route["recipe"]).resolve()),
@@ -231,7 +234,7 @@ def prepare(
         "synthetic_plan": {"path": str(synthetic_plan_path.resolve()),
                            "sha256": plan_sha256},
         "per_type": per_type,
-        "config": str(config_path.resolve()),
+        "config": str(published / config_path.name),
     }
     (output / "synthesis_request.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
@@ -244,10 +247,12 @@ def main() -> int:
     parser.add_argument("--synthetic-plan", type=Path, required=True)
     parser.add_argument("--synthetic-plan-sha256", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--published-output-dir", type=Path)
     args = parser.parse_args()
     result = prepare(
         args.policy.resolve(), args.strict_gaps.resolve(), args.synthetic_plan.resolve(),
-        args.synthetic_plan_sha256, args.output_dir.resolve()
+        args.synthetic_plan_sha256, args.output_dir.resolve(),
+        args.published_output_dir.resolve() if args.published_output_dir else None,
     )
     print(json.dumps(result, sort_keys=True))
     return 0
