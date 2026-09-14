@@ -7,9 +7,11 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import filecmp
 import hashlib
 import json
+import math
 import os
 import shutil
 import sys
@@ -152,8 +154,18 @@ def synthetic_fraction_cap(path: str | Path) -> float:
     return value
 
 
-def synthetic_records(specs: list[str]) -> list[dict[str, Any]]:
+def synthetic_records(
+    specs: list[str], minimum_area: float, maximum_aspect: float,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
     output = []
+    quality = collections.Counter({
+        "input_images": 0,
+        "input_annotations": 0,
+        "rejected_annotations_small": 0,
+        "rejected_annotations_aspect": 0,
+        "rejected_annotations_full_frame": 0,
+        "rejected_images_no_eligible_boxes": 0,
+    })
     for spec in specs:
         if "::" not in spec:
             raise ValueError("synthetic-source must be COCO_JSON::IMAGES_DIR")
@@ -172,21 +184,75 @@ def synthetic_records(specs: list[str]) -> list[dict[str, Any]]:
                 [float(value) for value in annotation["bbox"]]
             )
         for image in coco.get("images", []):
-            boxes = annotations.get(image.get("id"), [])
+            width, height = int(image["width"]), int(image["height"])
+            if width < 1 or height < 1:
+                raise ValueError("synthetic COCO image has invalid dimensions")
+            quality["input_images"] += 1
+            boxes = []
+            for bbox in annotations.get(image.get("id"), []):
+                quality["input_annotations"] += 1
+                x, y, box_width, box_height = bbox
+                if (min(x, y) < 0 or box_width <= 0 or box_height <= 0
+                        or x + box_width > width or y + box_height > height):
+                    raise ValueError("synthetic COCO bbox is invalid or outside its image")
+                if box_width * box_height < minimum_area:
+                    quality["rejected_annotations_small"] += 1
+                    continue
+                if max(box_width / box_height, box_height / box_width) > maximum_aspect:
+                    quality["rejected_annotations_aspect"] += 1
+                    continue
+                if x <= 0 and y <= 0 and x + box_width >= width and y + box_height >= height:
+                    quality["rejected_annotations_full_frame"] += 1
+                    continue
+                boxes.append(bbox)
             if not boxes:
-                raise ValueError("synthetic COCO image has no defect annotation")
+                quality["rejected_images_no_eligible_boxes"] += 1
+                continue
             raw_source = image.get("source_path") or images_dir / str(image["file_name"])
             source = source_key(raw_source)
             output.append(
                 {
                     "source_path": source,
-                    "width": int(image["width"]),
-                    "height": int(image["height"]),
+                    "width": width,
+                    "height": height,
                     "boxes": boxes,
                     "kind": "synthetic_defect",
+                    "synthetic_stratum": str(image.get("dataset_id") or "unknown"),
                 }
             )
-    return output
+    quality["eligible_images"] = len(output)
+    quality["eligible_annotations"] = sum(len(row["boxes"]) for row in output)
+    return output, dict(quality)
+
+
+def stratified_synthetic_records(
+    candidates: dict[str, dict[str, Any]], limit: int,
+) -> list[dict[str, Any]]:
+    if limit <= 0:
+        return []
+    groups: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+    for record in candidates.values():
+        groups[str(record.get("synthetic_stratum") or "unknown")].append(record)
+    total = sum(len(rows) for rows in groups.values())
+    if limit >= total:
+        return [candidates[key] for key in sorted(candidates)]
+    exact = {name: limit * len(rows) / total for name, rows in groups.items()}
+    allocation = {name: math.floor(value) for name, value in exact.items()}
+    remaining = limit - sum(allocation.values())
+    for name in sorted(groups, key=lambda value: (-(exact[value] % 1), value)):
+        if remaining <= 0:
+            break
+        if allocation[name] < len(groups[name]):
+            allocation[name] += 1
+            remaining -= 1
+    selected = []
+    for name, rows in groups.items():
+        ranked = sorted(rows, key=lambda row: (
+            hashlib.sha256(source_key(row["source_path"]).encode()).hexdigest(),
+            source_key(row["source_path"]),
+        ))
+        selected.extend(ranked[:allocation[name]])
+    return sorted(selected, key=lambda row: source_key(row["source_path"]))
 
 
 def materialize(source: Path, destination: Path, mode: str) -> None:
@@ -216,7 +282,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
 
     previous_records = previous_assembled_records(previous_coco)
     routed_records = route_records(args.route_manifest)
-    requested_synthetic_records = synthetic_records(args.synthetic_source)
+    policy = yaml.safe_load(Path(args.policy).expanduser().resolve().read_text(encoding="utf-8"))
+    admission = policy.get("admission") or {}
+    requested_synthetic_records, synthetic_quality = synthetic_records(
+        args.synthetic_source,
+        float(admission.get("minimum_box_area_px", 64)),
+        float(admission.get("maximum_box_aspect", 25.0)),
+    )
     base_records = previous_records + routed_records
     base_unique = {source_key(record["source_path"]): record for record in base_records}
     base_kind_counts: dict[str, int] = {}
@@ -242,10 +314,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         if key in synthetic_candidates and synthetic_candidates[key].get("boxes") != record.get("boxes"):
             raise ValueError(f"conflicting duplicate synthetic source image: {key}")
         synthetic_candidates.setdefault(key, record)
-    admitted_synthetic_records = [
-        synthetic_candidates[key]
-        for key in sorted(synthetic_candidates)[:synthetic_room]
-    ]
+    admitted_synthetic_records = stratified_synthetic_records(
+        synthetic_candidates, synthetic_room
+    )
     records = base_records + admitted_synthetic_records
     unique: dict[str, dict[str, Any]] = {}
     for record in records:
@@ -290,16 +361,17 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:16]
         file_name = f"deft_od_aoi_{digest}{suffix}"
         materialize(source, images_dir / file_name, args.link_mode)
-        images.append(
-            {
+        image = {
                 "id": image_id,
                 "file_name": file_name,
                 "width": int(record["width"]),
                 "height": int(record["height"]),
                 "source_path": key,
                 "deft_od_aoi_kind": record.get("kind", "unknown"),
-            }
-        )
+        }
+        if record.get("synthetic_stratum"):
+            image["synthetic_stratum"] = record["synthetic_stratum"]
+        images.append(image)
         for bbox in record.get("boxes", []):
             x, y, width, height = [float(value) for value in bbox]
             if width <= 0 or height <= 0:
@@ -336,6 +408,11 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "requested_new": len(synthetic_candidates),
             "admitted_new": len(admitted_synthetic_records),
             "excluded_by_cap": len(synthetic_candidates) - len(admitted_synthetic_records),
+            "quality_filter": synthetic_quality,
+            "admitted_by_stratum": dict(sorted(collections.Counter(
+                row.get("synthetic_stratum", "unknown")
+                for row in admitted_synthetic_records
+            ).items())),
         },
         "expected_cumulative_route_counts": expected_route_counts,
         "previous_assembled_coco": (

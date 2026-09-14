@@ -1,6 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+import hashlib
 import importlib.util
 import json
 from argparse import Namespace
@@ -36,7 +37,8 @@ def test_assembly_enforces_deterministic_cumulative_synthetic_cap(tmp_path: Path
     }))
     policy = tmp_path / "policy.yaml"
     policy.write_text(yaml.safe_dump({
-        "synthesis": {"cumulative_fraction_of_real_defects": 0.25}
+        "synthesis": {"cumulative_fraction_of_real_defects": 0.25},
+        "admission": {"minimum_box_area_px": 64, "maximum_box_aspect": 25.0},
     }))
 
     generated = tmp_path / "generated"
@@ -51,7 +53,7 @@ def test_assembly_enforces_deterministic_cumulative_synthetic_cap(tmp_path: Path
         })
         synthetic_annotations.append({
             "id": index, "image_id": index, "category_id": 7,
-            "bbox": [2, 2, 3, 3],
+            "bbox": [2, 2, 8, 8],
         })
     synthetic_coco = tmp_path / "synthetic.json"
     synthetic_coco.write_text(json.dumps({
@@ -70,15 +72,64 @@ def test_assembly_enforces_deterministic_cumulative_synthetic_cap(tmp_path: Path
     ))
 
     assert result["by_kind"] == {"real_defect": 4, "synthetic_defect": 1}
-    assert result["synthetic_admission"] == {
-        "fraction_of_real_defects": 0.25,
-        "cumulative_limit": 1,
-        "retained_previous": 0,
-        "requested_new": 3,
-        "admitted_new": 1,
-        "excluded_by_cap": 2,
-    }
+    assert result["synthetic_admission"]["admitted_new"] == 1
+    assert result["synthetic_admission"]["excluded_by_cap"] == 2
+    assert result["synthetic_admission"]["quality_filter"]["eligible_images"] == 3
     output = json.loads(output_coco.read_text())
     admitted = [row for row in output["images"] if row["deft_od_aoi_kind"] == "synthetic_defect"]
     assert len(admitted) == 1
-    assert admitted[0]["source_path"] == str((generated / "a.png").resolve())
+    expected = min(
+        [(generated / name).resolve() for name in ("z.png", "a.png", "m.png")],
+        key=lambda path: hashlib.sha256(str(path).encode()).hexdigest(),
+    )
+    assert admitted[0]["source_path"] == str(expected)
+
+
+def test_synthetic_quality_and_stratified_cap_prevent_noisy_or_biased_admission(
+    tmp_path: Path,
+) -> None:
+    records = []
+    for index in range(8):
+        image = tmp_path / f"real-{index}.png"
+        image.write_bytes(b"real")
+        records.append({"source_path": str(image), "width": 20, "height": 20,
+                        "boxes": [[1, 1, 8, 8]], "kind": "real_defect"})
+    route = tmp_path / "route.json"
+    route.write_text(json.dumps(records))
+    routing = tmp_path / "routing.json"
+    routing.write_text(json.dumps({"cumulative_real_defectives": 8,
+                                   "cumulative_clean_negatives": 0}))
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(yaml.safe_dump({
+        "synthesis": {"cumulative_fraction_of_real_defects": 0.5},
+        "admission": {"minimum_box_area_px": 64, "maximum_box_aspect": 25.0},
+    }))
+    generated = tmp_path / "generated"
+    generated.mkdir()
+    images, annotations = [], []
+    for index in range(8):
+        name = f"{'z' if index < 4 else 'a'}-{index}.png"
+        (generated / name).write_bytes(b"synthetic")
+        images.append({"id": index + 1, "file_name": name, "width": 20, "height": 20,
+                       "dataset_id": "group-a" if index < 4 else "group-b"})
+        bbox = ([0, 0, 20, 20] if index == 0 else
+                [1, 1, 1, 1] if index == 4 else [2, 2, 8, 8])
+        annotations.append({"id": index + 1, "image_id": index + 1,
+                            "category_id": 1, "bbox": bbox})
+    synthetic = tmp_path / "synthetic.json"
+    synthetic.write_text(json.dumps({"images": images, "annotations": annotations,
+                                     "categories": [{"id": 1, "name": "defect"}]}))
+
+    output = tmp_path / "out/train.json"
+    result = MODULE.run(Namespace(
+        policy=str(policy), previous_assembled_coco=None, route_manifest=[str(route)],
+        current_routing_report=str(routing),
+        synthetic_source=[f"{synthetic}::{generated}"], output_coco=str(output),
+        output_images_dir=str(tmp_path / "out/images"), link_mode="symlink",
+    ))
+
+    admission = result["synthetic_admission"]
+    assert admission["quality_filter"]["rejected_annotations_full_frame"] == 1
+    assert admission["quality_filter"]["rejected_annotations_small"] == 1
+    assert admission["requested_new"] == 6
+    assert admission["admitted_by_stratum"] == {"group-a": 2, "group-b": 2}
