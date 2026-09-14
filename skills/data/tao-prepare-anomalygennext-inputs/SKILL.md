@@ -69,7 +69,7 @@ then submit the `run_amp` action:
 ```bash
 scripts/run_anomalygennext_amp.py \
   --config /path/to/filtering.yaml \
-  --prepared-root /existing/result/root \
+  --prepared-root /runwork/prepared \
   --published-root /durable/result/root \
   --sam2-checkpoint /models/sam2.1_hiera_large.pt
 ```
