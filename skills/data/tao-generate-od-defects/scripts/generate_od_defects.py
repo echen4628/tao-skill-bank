@@ -164,9 +164,10 @@ def _run_group(group: dict[str, Any], output: Path, args: argparse.Namespace) ->
                "--checkpoint", group["checkpoint"], "--recipe", group["recipe"],
                "--base_checkpoint", str(args.base_checkpoint),
                "--input_data_path", group["testcase"], "--output_dir", str(raw)]
-    subprocess.run(command, check=True)
+    subprocess.run(command, check=True, stdout=sys.stderr)
     subprocess.run([sys.executable, str(args.repo / "anomalygen/scripts/texture/pseudo_label.py"),
-                    "--gen_root", str(raw), "--output_dir", str(labels), "--no_caption"], check=True)
+                    "--gen_root", str(raw), "--output_dir", str(labels), "--no_caption"],
+                   check=True, stdout=sys.stderr)
     generated = _csv_count(raw / "texture_ft_generation_result.csv")
     blocked = _csv_count(raw / "guardrail_blocked.csv")
     if generated + blocked != group["requested_rows"]:

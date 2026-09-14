@@ -4,6 +4,7 @@
 import argparse
 import importlib.util
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -67,6 +68,35 @@ def test_base_checkpoint_requires_parent_of_dcp_model_directory(tmp_path: Path) 
     MODULE._validate_base_checkpoint(tmp_path)
     with pytest.raises(ValueError, match="checkpoint parent"):
         MODULE._validate_base_checkpoint(model)
+
+
+def test_native_logs_are_kept_off_machine_readable_stdout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+
+    def fake_run(command, *, check, stdout):
+        assert check is True
+        assert stdout is sys.stderr
+        calls.append(command)
+        if str(command[1]).endswith("pseudo_label.py"):
+            labels = tmp_path / "out/pseudo_labels"
+            labels.mkdir(parents=True)
+            (labels / "coco_annotations.json").write_text(json.dumps({
+                "images": [], "annotations": [], "categories": [],
+            }))
+
+    monkeypatch.setattr(MODULE.subprocess, "run", fake_run)
+    group = {
+        "dataset_id": "d", "checkpoint": "adapter.pt", "recipe": "recipe.yaml",
+        "testcase": "testcase.jsonl", "anomaly_types": ["texture+defect"],
+        "requested_rows": 0,
+    }
+    args = argparse.Namespace(repo=tmp_path, num_gpus=1, base_checkpoint=tmp_path)
+    result = MODULE._run_group(group, tmp_path / "out", args)
+
+    assert len(calls) == 2
+    assert result["generated"] == result["blocked"] == 0
 
 
 def test_merge_validates_boxes_and_writes_binary_projection(tmp_path: Path) -> None:
