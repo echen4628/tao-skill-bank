@@ -50,7 +50,10 @@ scripts/generate_od_defects.py \
 
 The action deliberately exposes no switch that disables the image's default
 guardrail path. An optional Hugging Face cache can provide the tokenizer and
-guardrail assets for offline execution.
+guardrail assets for offline execution. With the pinned 1.1 image, offline
+execution requires `Qwen/Qwen3-VL-8B-Instruct`,
+`Qwen/Qwen3Guard-Gen-0.6B`, `nvidia/Cosmos-Guardrail1`, and
+`nvidia/Cosmos3-Edge`; preflight verifies their blob and snapshot directories.
 
 ## Completion
 

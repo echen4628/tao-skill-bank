@@ -44,6 +44,20 @@ def test_contract_rejects_type_absent_from_recipe(tmp_path: Path) -> None:
         MODULE.groups(args)
 
 
+def test_offline_cache_requires_pinned_tokenizer_and_guardrail_repositories(
+    tmp_path: Path,
+) -> None:
+    for repo in MODULE.OFFLINE_HF_REPOS:
+        directory = tmp_path / "hub" / f"models--{repo.replace('/', '--')}"
+        (directory / "blobs").mkdir(parents=True)
+        (directory / "snapshots").mkdir()
+    MODULE._validate_offline_hf_cache(tmp_path)
+    missing = tmp_path / "hub/models--Qwen--Qwen3-VL-8B-Instruct/snapshots"
+    missing.rmdir()
+    with pytest.raises(FileNotFoundError, match="Qwen3-VL-8B-Instruct"):
+        MODULE._validate_offline_hf_cache(tmp_path)
+
+
 def test_merge_validates_boxes_and_writes_binary_projection(tmp_path: Path) -> None:
     image = tmp_path / "generated.png"
     image.write_bytes(b"image")

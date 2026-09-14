@@ -21,6 +21,12 @@ import yaml
 
 
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+OFFLINE_HF_REPOS = (
+    "Qwen/Qwen3-VL-8B-Instruct",
+    "Qwen/Qwen3Guard-Gen-0.6B",
+    "nvidia/Cosmos-Guardrail1",
+    "nvidia/Cosmos3-Edge",
+)
 
 
 def _json(path: Path, value: Any) -> None:
@@ -38,6 +44,20 @@ def _sha(path: Path) -> str:
 
 def _rows(path: Path) -> list[dict[str, Any]]:
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
+
+
+def _validate_offline_hf_cache(root: Path) -> None:
+    hub = root / "hub" if (root / "hub").is_dir() else root
+    missing = []
+    for repo in OFFLINE_HF_REPOS:
+        directory = hub / f"models--{repo.replace('/', '--')}"
+        if not (directory / "blobs").is_dir() or not (directory / "snapshots").is_dir():
+            missing.append(repo)
+    if missing:
+        raise FileNotFoundError(
+            "offline Hugging Face cache lacks tokenizer/guardrail repositories: "
+            + ", ".join(missing)
+        )
 
 
 def _validate_manifest(root: Path) -> None:
@@ -223,6 +243,8 @@ def main() -> int:
     if args.hf_cache:
         if not args.hf_cache.is_dir():
             raise FileNotFoundError(args.hf_cache)
+        if os.environ.get("HF_HUB_OFFLINE", "").lower() in {"1", "true", "yes"}:
+            _validate_offline_hf_cache(args.hf_cache)
         env["HF_HOME"] = str(args.hf_cache.resolve())
     selected = groups(args)
     args.output_dir.mkdir(parents=True)
