@@ -49,7 +49,10 @@ When probes start at iteration 1, there is no prior training-set size for the
 growth candidate. Treat that cold start as high growth so all three probes are
 distinct; iteration 2 and later use the recorded preceding training-set size.
 
-All three must complete before selection. The main budget is:
+All three must complete before selection. Probe eligibility and the main epoch
+budget are independent: iterations 1–2 always use 36 main epochs, even when
+`probe_start_iteration` is lowered to 1 or 2. From iteration 3 onward, the main
+budget is:
 
 ```text
 round(36 * sqrt(10000 / training_images))
