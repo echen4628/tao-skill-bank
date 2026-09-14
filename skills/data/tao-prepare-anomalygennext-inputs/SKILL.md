@@ -83,6 +83,11 @@ The image-owned AnomalyGenNext checkout lives at `/workspace/paidf-anomalygen`.
 Mount node-local working data somewhere else (for example `/runwork`); mounting
 scratch over `/workspace` hides the native `anomalygen` package and is invalid.
 
+Allocate exactly one NVIDIA GPU for `run_amp`; Qwen and SAM2 placement are not
+CPU actions. The preparation and finalization actions remain CPU-compatible.
+The top-level `gpu_spec_key: null` exists because this mixed-action skill has no
+single config field from which a platform can infer that runtime distinction.
+
 ```bash
 scripts/finalize_anomalygennext_inputs.py --prepared-root /existing/result/root
 ```

@@ -2,6 +2,9 @@ network_arch: tao-prepare-anomalygennext-inputs
 type: data
 container_image: nvcr.io/nvidia/paidf-anomalygen:1.1.0  # versions-key: images.metropolis_sdg.anomalygen_next
 execution_environment: container
+# Mixed runtime: prepare_plan/finalize_inputs are CPU-compatible, but run_amp
+# requires exactly one visible NVIDIA GPU for native Qwen + SAM2 placement.
+# No shared spec field encodes that action-specific count.
 gpu_spec_key: null
 required_credentials: []
 optional_credentials:
