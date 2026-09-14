@@ -103,18 +103,24 @@ def test_run_keeps_native_logs_off_machine_readable_stdout(
     config_path.write_bytes(frozen.read_bytes())
     sam2 = tmp_path / "sam2.1_hiera_large.pt"
     sam2.write_bytes(b"checkpoint")
+    published = tmp_path.parent / "durable-prepared-root"
 
     def fake_run(command: list[str], *, check: bool, stdout: object) -> None:
         assert check is True
         assert stdout is sys.stderr
         assert str(sam2.resolve()) in command
+        assert command[command.index("--output_dir") + 1] == str(tmp_path / "amp")
         print("native placement progress", file=stdout)
-        (tmp_path / "amp" / "testcase.jsonl").write_text("{}\n")
+        (tmp_path / "amp" / "testcase.jsonl").write_text(
+            json.dumps({"mask_filename": str(tmp_path / "amp" / "generated.png")}) + "\n"
+        )
 
     monkeypatch.setattr(MODULE.subprocess, "run", fake_run)
-    report = MODULE.run(config_path, tmp_path, sam2)
+    report = MODULE.run(config_path, tmp_path, sam2, published)
     captured = capsys.readouterr()
-    assert report["testcase"].endswith("amp/testcase.jsonl")
+    assert report["testcase"] == str(published.resolve() / "amp" / "testcase.jsonl")
+    testcase = json.loads((tmp_path / "amp" / "testcase.jsonl").read_text())
+    assert testcase["mask_filename"] == str(published.resolve() / "amp" / "generated.png")
     assert captured.out == ""
     assert "native placement progress" in captured.err
 

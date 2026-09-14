@@ -70,6 +70,7 @@ then submit the `run_amp` action:
 scripts/run_anomalygennext_amp.py \
   --config /path/to/filtering.yaml \
   --prepared-root /existing/result/root \
+  --published-root /durable/result/root \
   --sam2-checkpoint /models/sam2.1_hiera_large.pt
 ```
 
@@ -82,6 +83,11 @@ AMP without modifying the source image or the frozen filtering config.
 The image-owned AnomalyGenNext checkout lives at `/workspace/paidf-anomalygen`.
 Mount node-local working data somewhere else (for example `/runwork`); mounting
 scratch over `/workspace` hides the native `anomalygen` package and is invalid.
+When node-local staging gives AMP a short `--prepared-root`, pass the durable
+copy-back location as `--published-root`. Native resize filenames are derived
+from the runtime path and can exceed the filesystem component limit if AMP is
+executed directly under a long durable path; emitted metadata is rewritten to
+the published root only after native AMP succeeds.
 
 Allocate exactly one NVIDIA GPU for `run_amp`; Qwen and SAM2 placement are not
 CPU actions. The preparation and finalization actions remain CPU-compatible.

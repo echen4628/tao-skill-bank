@@ -126,7 +126,19 @@ def plan(root: Path, config: dict[str, Any]) -> dict[str, Any]:
             "embedding_dim": int(clean_vectors.shape[1])}
 
 
-def run(config_path: Path, root: Path, sam2_checkpoint: Path) -> dict[str, Any]:
+def _publish_paths(amp_dir: Path, runtime_root: Path, published_root: Path) -> None:
+    """Replace ephemeral runtime roots in AMP metadata with durable paths."""
+    source, destination = str(runtime_root.resolve()), str(published_root.resolve())
+    if source == destination:
+        return
+    for path in sorted(amp_dir.rglob("*.json")) + sorted(amp_dir.rglob("*.jsonl")):
+        value = path.read_text(encoding="utf-8")
+        if source in value:
+            path.write_text(value.replace(source, destination), encoding="utf-8")
+
+
+def run(config_path: Path, root: Path, sam2_checkpoint: Path,
+        published_root: Path | None = None) -> dict[str, Any]:
     if not sam2_checkpoint.is_file():
         raise FileNotFoundError(f"SAM2.1 checkpoint is missing: {sam2_checkpoint}")
     frozen = root / "prepared_anomalygennext_inputs" / "filtering_config.yaml"
@@ -155,10 +167,12 @@ def run(config_path: Path, root: Path, sam2_checkpoint: Path) -> dict[str, Any]:
     # placement logs to stdout, while this wrapper's stdout contract is the
     # single JSON report printed by ``main``.
     subprocess.run(command, check=True, stdout=sys.stderr)
+    published_root = (published_root or root).resolve()
+    _publish_paths(root / "amp", root, published_root)
     testcase = root / "amp" / "testcase.jsonl"
     if not testcase.is_file() or not testcase.read_text().strip():
         raise ValueError("AMP produced no testcase rows")
-    report["testcase"] = str(testcase)
+    report["testcase"] = str(published_root / "amp" / "testcase.jsonl")
     return report
 
 
@@ -166,10 +180,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True)
     parser.add_argument("--prepared-root", required=True)
+    parser.add_argument(
+        "--published-root",
+        type=Path,
+        help="durable root written into AMP metadata when execution uses a short staging path",
+    )
     parser.add_argument("--sam2-checkpoint", type=Path, required=True)
     args = parser.parse_args()
     result = run(Path(args.config).resolve(), Path(args.prepared_root).resolve(),
-                 args.sam2_checkpoint.resolve())
+                 args.sam2_checkpoint.resolve(), args.published_root)
     print(json.dumps(result, sort_keys=True))
     return 0
 
