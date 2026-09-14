@@ -24,14 +24,22 @@ def _metrics(paths: list[Path]) -> list[tuple[int, float]]:
     for path in paths:
         if not path.is_file():
             raise FileNotFoundError(path)
+        latest_epoch = None
         for line in path.read_text(errors="ignore").splitlines():
             try:
                 row = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if row.get("epoch") is not None:
+                try:
+                    latest_epoch = int(row["epoch"])
+                except (TypeError, ValueError):
+                    pass
             kpi = row.get("kpi") if isinstance(row.get("kpi"), dict) else {}
             score = kpi.get("val_mAP50", kpi.get("mAP50"))
-            epoch = row.get("epoch", kpi.get("epoch"))
+            epoch = kpi.get("epoch")
+            if epoch is None:
+                epoch = latest_epoch
             if score is not None and epoch is not None and math.isfinite(float(score)):
                 result.append((int(epoch), float(score)))
     if not result:
@@ -60,6 +68,12 @@ def probes(manifest_path: Path, template_path: Path, statuses: list[Path],
     # Both collections are required to contain exactly three entries above.
     # Keep this controller compatible with Python 3.9 cluster hosts.
     for probe, status in zip(manifest["probes"], statuses):
+        expected_status = probe.get("status_path")
+        if expected_status and status.resolve() != Path(expected_status).resolve():
+            raise ValueError(
+                f"probe p{probe['index']} status path mismatch: "
+                f"expected {Path(expected_status).resolve()}, got {status.resolve()}"
+            )
         epoch, score = max(_metrics([status]), key=lambda row: (row[1], -row[0]))
         scored.append({**probe, "best_epoch": epoch, "best_kpi_mAP50": score})
     winner = max(scored, key=lambda row: (row["best_kpi_mAP50"], -row["index"]))

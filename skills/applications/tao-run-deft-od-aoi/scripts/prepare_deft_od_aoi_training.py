@@ -130,7 +130,13 @@ def prepare(policy_path: Path, iteration: int, train_coco: Path, train_images: P
             spec["train"]["num_epochs"] = int(training["probe_epochs"])
             spec["train"]["checkpoint_interval"] = int(training["probe_epochs"])
             _write(output / f"probe{index}.yaml", spec)
-            manifest["probes"].append({"index": index, "name": name, "overrides": overrides})
+            manifest["probes"].append({
+                "index": index,
+                "name": name,
+                "overrides": overrides,
+                "results_dir": spec["results_dir"],
+                "status_path": str(Path(spec["results_dir"]) / "train" / "status.json"),
+            })
         manifest["growth"] = growth
         manifest["growth_basis"] = "cold_start" if cold_start else "history"
     (output / "training_manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")

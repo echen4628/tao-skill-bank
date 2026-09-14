@@ -60,6 +60,9 @@ def test_later_iteration_emits_three_deterministic_probe_specs(tmp_path: Path) -
         str(tmp_path / f"runs/probes/p{index}") for index in range(3)
     }
     assert all(spec["train"]["num_epochs"] == 10 for spec in specs)
+    assert {probe["status_path"] for probe in report["probes"]} == {
+        str(tmp_path / f"runs/probes/p{index}/train/status.json") for index in range(3)
+    }
 
 
 def test_probe_start_iteration_can_enable_distinct_iteration_one_probes(

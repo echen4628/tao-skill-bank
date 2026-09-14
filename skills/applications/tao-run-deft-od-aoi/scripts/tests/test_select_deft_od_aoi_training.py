@@ -26,6 +26,15 @@ def _status(path: Path, epoch: int, score: float) -> None:
     path.write_text(json.dumps({"epoch": epoch, "kpi": {"val_mAP50": score}}) + "\n")
 
 
+def test_metrics_carries_epoch_to_later_kpi_row(tmp_path: Path) -> None:
+    status = tmp_path / "status.json"
+    status.write_text("\n".join((
+        json.dumps({"epoch": 7, "step": 120}),
+        json.dumps({"kpi": {"val_mAP50": 0.61}}),
+    )) + "\n")
+    assert MODULE._metrics([status]) == [(7, 0.61)]
+
+
 def test_probe_selection_patches_winner_and_updates_history(tmp_path: Path) -> None:
     manifest = tmp_path / "manifest.json"
     manifest.write_text(json.dumps({"iteration": 3, "train_size": 120,
@@ -36,9 +45,12 @@ def test_probe_selection_patches_winner_and_updates_history(tmp_path: Path) -> N
     template.write_text(yaml.safe_dump({"train": {"optim": {"lr": 0.01}}}))
     statuses = []
     for index, score in enumerate((0.4, 0.6, 0.5)):
-        status = tmp_path / f"p{index}.jsonl"
+        status = tmp_path / "training" / "probes" / f"p{index}" / "train" / "status.json"
         _status(status, 9, score)
         statuses.append(status)
+        manifest_value = json.loads(manifest.read_text())
+        manifest_value["probes"][index]["status_path"] = str(status)
+        manifest.write_text(json.dumps(manifest_value))
     report = MODULE.probes(manifest, template, statuses, tmp_path / "selected", None)
     assert report["winner"]["index"] == 1
     spec = yaml.safe_load((tmp_path / "selected/train.yaml").read_text())
@@ -46,6 +58,28 @@ def test_probe_selection_patches_winner_and_updates_history(tmp_path: Path) -> N
     assert json.loads((tmp_path / "selected/history.json").read_text()) == [
         {"iteration": 3, "train_size": 120}
     ]
+
+
+def test_probe_selection_rejects_status_order_mismatch(tmp_path: Path) -> None:
+    manifest = tmp_path / "manifest.json"
+    probes = []
+    statuses = []
+    for index in range(3):
+        status = tmp_path / "training" / "probes" / f"p{index}" / "train" / "status.json"
+        _status(status, 9, 0.4 + index / 10)
+        statuses.append(status)
+        probes.append({"index": index, "name": str(index), "overrides": {},
+                       "status_path": str(status)})
+    manifest.write_text(json.dumps({"iteration": 1, "train_size": 10, "probes": probes}))
+    template = tmp_path / "template.yaml"
+    template.write_text(yaml.safe_dump({"train": {}}))
+    try:
+        MODULE.probes(manifest, template, [statuses[1], statuses[0], statuses[2]],
+                      tmp_path / "selected", None)
+    except ValueError as exc:
+        assert "status path mismatch" in str(exc)
+    else:
+        raise AssertionError("mismatched probe status order was accepted")
 
 
 def test_checkpoint_selection_emits_one_terminal_resume_extension(tmp_path: Path) -> None:

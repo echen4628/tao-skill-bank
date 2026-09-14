@@ -192,7 +192,8 @@ Select all three probes before main training:
 scripts/select_deft_od_aoi_training.py probes \
   --manifest "$SPECS/training_manifest.json" \
   --main-template "$SPECS/main_template.yaml" \
-  --status "$P0/status.json" --status "$P1/status.json" --status "$P2/status.json" \
+  --status "$P0/train/status.json" --status "$P1/train/status.json" \
+  --status "$P2/train/status.json" \
   --output-dir "$SPECS/selected"
 ```
 
