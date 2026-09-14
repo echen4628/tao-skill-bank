@@ -10,7 +10,9 @@ nvcr.io/nvidia/paidf-anomalygen:1.1.0
 
 The image contains AnomalyGenNext 1.1 and its runtime at
 `/workspace/paidf-anomalygen`. Do not substitute the older 1.0 image and do
-not overlay an external checkout or host virtualenv.
+not overlay an external checkout or host virtualenv. Do not mount a scratch
+directory over `/workspace`; use a separate target such as `/runwork`, or the
+mount will hide the release source that this action executes.
 
 Expose the testcase or prepared-input result, task checkpoint and recipe,
 Cosmos3-Nano base checkpoint, optional real-image root, optional Hugging Face

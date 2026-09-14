@@ -79,6 +79,9 @@ This writes `knn_candidates.parquet`, the native AMP request, and
 The public 1.1 image includes AMP code but not the SAM2.1 payload. Expose the
 checkpoint as a read-only runtime input; the wrapper injects it into upstream
 AMP without modifying the source image or the frozen filtering config.
+The image-owned AnomalyGenNext checkout lives at `/workspace/paidf-anomalygen`.
+Mount node-local working data somewhere else (for example `/runwork`); mounting
+scratch over `/workspace` hides the native `anomalygen` package and is invalid.
 
 ```bash
 scripts/finalize_anomalygennext_inputs.py --prepared-root /existing/result/root
