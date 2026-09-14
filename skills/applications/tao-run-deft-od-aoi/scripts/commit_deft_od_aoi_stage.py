@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,6 +35,29 @@ def _read_json_artifact(artifacts: dict[str, dict[str, Any]], name: str) -> Any:
     if name not in artifacts:
         raise ValueError(f"stage commit requires artifact {name}")
     return json.loads(Path(artifacts[name]["path"]).read_text())
+
+
+def _json_object(artifacts: dict[str, dict[str, Any]], name: str) -> dict[str, Any]:
+    value = _read_json_artifact(artifacts, name)
+    if not isinstance(value, dict):
+        raise ValueError(f"artifact {name} must be a JSON object")
+    return value
+
+
+def _terminal_success(artifacts: dict[str, dict[str, Any]], name: str) -> None:
+    status = _json_object(artifacts, name)
+    if status.get("status") != "COMPLETE" or status.get("exit_code") != 0:
+        raise ValueError(f"{name} does not prove terminal success")
+
+
+def _finite_number(value: Any, label: str) -> float:
+    try:
+        result = float(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{label} must be numeric") from error
+    if not math.isfinite(result):
+        raise ValueError(f"{label} must be finite")
+    return result
 
 
 def _nonzero_counts(value: Any) -> dict[str, int]:
@@ -151,6 +175,128 @@ def _validate_iteration_synthesis(
         raise ValueError("synthesis reconciliation totals disagree with per-type counts")
 
 
+def _validate_checkpoint_selection(
+    artifacts: dict[str, dict[str, Any]], iteration: int
+) -> dict[str, Any]:
+    report = _json_object(artifacts, "checkpoint_selection")
+    if report.get("status") != "COMPLETE" or report.get("action") != "select":
+        raise ValueError("checkpoint selection is not a completed final selection")
+    try:
+        epoch = int(report["best_epoch"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("checkpoint selection has no valid best_epoch") from error
+    if epoch < 0 or _finite_number(report.get("best_kpi_mAP50"), "best_kpi_mAP50") < 0:
+        raise ValueError("checkpoint selection has invalid KPI fields")
+    selected = Path(str(report.get("selected_checkpoint", ""))).expanduser().resolve()
+    if selected.suffix not in {".pth", ".pt"} or not selected.is_file():
+        raise ValueError("checkpoint selection does not identify an existing checkpoint")
+    statuses = report.get("status_files")
+    if not isinstance(statuses, list) or not statuses or not all(isinstance(p, str) and p for p in statuses):
+        raise ValueError("checkpoint selection does not bind training status files")
+    return report
+
+
+def _validate_iteration_training(
+    iteration: int, artifacts: dict[str, dict[str, Any]]
+) -> None:
+    _terminal_success(artifacts, "main_status")
+    _validate_checkpoint_selection(artifacts, iteration)
+    if "probe_winner" in artifacts:
+        winner = _json_object(artifacts, "probe_winner")
+        if (winner.get("status") != "COMPLETE" or not isinstance(winner.get("winner"), dict)
+                or not isinstance(winner.get("scores"), list)):
+            raise ValueError("probe winner is not a completed selection report")
+        train_spec = Path(str(winner.get("train_spec", ""))).expanduser().resolve()
+        if not train_spec.is_file():
+            raise ValueError("probe winner does not identify an existing main train spec")
+
+
+def _committed_checkpoint(
+    state: dict[str, Any], iteration: int
+) -> tuple[Path, str]:
+    for event in reversed(state.get("events", [])):
+        if event.get("stage") != "iteration_training" or int(event.get("iteration", -1)) != iteration:
+            continue
+        artifact = (event.get("artifacts") or {}).get("checkpoint_selection")
+        if not artifact:
+            break
+        report_path = Path(artifact["path"])
+        if _sha(report_path) != artifact["sha256"]:
+            raise ValueError("committed checkpoint selection hash is stale")
+        report = json.loads(report_path.read_text())
+        checkpoint = Path(str(report.get("selected_checkpoint", ""))).expanduser().resolve()
+        if not checkpoint.is_file():
+            raise ValueError("committed selected checkpoint is missing")
+        return checkpoint, _sha(checkpoint)
+    raise ValueError("iteration measurement has no committed checkpoint selection")
+
+
+def _validate_iteration_measurement(
+    state: dict[str, Any], iteration: int, artifacts: dict[str, dict[str, Any]]
+) -> None:
+    _terminal_success(artifacts, "kpi_inference_status")
+    _terminal_success(artifacts, "test_inference_status")
+    manifest = _json_object(artifacts, "measurement_manifest")
+    if manifest.get("status") != "COMPLETE":
+        raise ValueError("measurement manifest is incomplete")
+    checkpoint, checkpoint_sha = _committed_checkpoint(state, iteration)
+    provenance = manifest.get("checkpoint_provenance") or {}
+    if (Path(str(manifest.get("checkpoint", ""))).expanduser().resolve() != checkpoint
+            or provenance.get("role") != "iteration_selected"
+            or Path(str(provenance.get("path", ""))).expanduser().resolve() != checkpoint
+            or provenance.get("sha256") != checkpoint_sha
+            or int(provenance.get("source_iteration", -1)) != iteration):
+        raise ValueError("measurement manifest does not bind the committed iteration checkpoint")
+    specs = manifest.get("specs") or {}
+    required = {"kpi_inference.yaml", "test_inference.yaml", "gap_loose.yaml", "gap_strict.yaml"}
+    if not required.issubset(specs) or not all(isinstance(specs[name], str) and specs[name] for name in required):
+        raise ValueError("measurement manifest does not declare all inference and gap specs")
+
+
+def _gap_counts(value: Any, label: str) -> dict[str, int]:
+    if not isinstance(value, dict) or set(value) - {"FP", "FN"}:
+        raise ValueError(f"{label} must contain only FP/FN counts")
+    result = {}
+    for key, count in value.items():
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise ValueError(f"{label}.{key} must be a nonnegative integer")
+        result[key] = count
+    return result
+
+
+def _validate_gap_report(report: dict[str, Any], kind: str) -> float:
+    if report.get("kpi") != f"kpi_{kind}":
+        raise ValueError(f"{kind} gap report has the wrong KPI tag")
+    totals = _gap_counts(report.get("counts_by_type"), f"{kind}.counts_by_type")
+    classes = report.get("counts_by_class")
+    if not isinstance(classes, dict) or not classes:
+        raise ValueError(f"{kind} gap report has no class counts")
+    aggregate = {"FP": 0, "FN": 0}
+    for name, counts in classes.items():
+        for gap_type, count in _gap_counts(counts, f"{kind}.counts_by_class.{name}").items():
+            aggregate[gap_type] += count
+    if any(aggregate[key] != totals.get(key, 0) for key in aggregate):
+        raise ValueError(f"{kind} gap report type and class counts disagree")
+    settings = report.get("settings") or {}
+    iou = _finite_number(settings.get("iou_threshold"), f"{kind}.iou_threshold")
+    confidence = _finite_number(settings.get("conf_threshold"), f"{kind}.conf_threshold")
+    minimum = _finite_number(settings.get("min_area"), f"{kind}.min_area")
+    if not 0 <= iou <= 1 or not 0 <= confidence <= 1 or minimum < 0:
+        raise ValueError(f"{kind} gap report settings are out of range")
+    return confidence
+
+
+def _validate_iteration_gaps(artifacts: dict[str, dict[str, Any]]) -> None:
+    for kind in ("loose", "strict"):
+        _terminal_success(artifacts, f"{kind}_status")
+        if f"{kind}_box_gaps" not in artifacts:
+            raise ValueError(f"iteration_gaps requires artifact {kind}_box_gaps")
+    loose = _validate_gap_report(_json_object(artifacts, "loose_gap_report"), "loose")
+    strict = _validate_gap_report(_json_object(artifacts, "strict_gap_report"), "strict")
+    if loose >= strict:
+        raise ValueError("loose gap confidence must be lower than strict gap confidence")
+
+
 def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> dict[str, Any]:
     state = json.loads(state_path.read_text())
     if state.get("status") not in {"READY", "RUNNING"} or state.get("next_stage") != stage:
@@ -173,6 +319,12 @@ def commit(state_path: Path, stage: str, iteration: int, values: list[str]) -> d
         _validate_iteration_retrieval(state, iteration, artifacts)
     if stage == "iteration_synthesis":
         _validate_iteration_synthesis(state, iteration, artifacts)
+    if stage == "iteration_training":
+        _validate_iteration_training(iteration, artifacts)
+    if stage == "iteration_measurement":
+        _validate_iteration_measurement(state, iteration, artifacts)
+    if stage == "iteration_gaps":
+        _validate_iteration_gaps(artifacts)
     next_stage, status = NEXT.get(stage), "RUNNING"
     if stage == "iteration_admission" and state.get("synthesis_enabled"):
         next_stage = "iteration_synthesis"

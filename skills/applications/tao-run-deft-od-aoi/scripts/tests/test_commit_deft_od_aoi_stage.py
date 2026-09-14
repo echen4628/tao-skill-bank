@@ -119,8 +119,74 @@ def _retrieval_artifacts(
     ]
 
 
+def _successful_status(path: Path, exit_code: int = 0) -> str:
+    path.write_text(json.dumps({"status": "COMPLETE", "exit_code": exit_code}))
+    return str(path)
+
+
+def _iteration_artifacts(root: Path) -> dict[str, list[str]]:
+    checkpoint = root / "model_epoch_001.pth"
+    checkpoint.write_bytes(b"checkpoint")
+    leaf_status = root / "train_leaf_status.jsonl"
+    leaf_status.write_text('{"epoch": 1, "kpi": {"val_mAP50": 0.75}}\n')
+    selection = root / "checkpoint_selection.json"
+    selection.write_text(json.dumps({
+        "status": "COMPLETE", "action": "select", "best_epoch": 1,
+        "best_kpi_mAP50": 0.75, "selected_checkpoint": str(checkpoint.resolve()),
+        "planned_epochs": 2, "extension_applied": False,
+        "status_files": [str(leaf_status.resolve())],
+    }))
+    main_status = root / "main_status.json"
+    _successful_status(main_status)
+    manifest = root / "measurement_manifest.json"
+    manifest.write_text(json.dumps({
+        "status": "COMPLETE", "checkpoint": str(checkpoint.resolve()),
+        "checkpoint_provenance": {
+            "role": "iteration_selected", "path": str(checkpoint.resolve()),
+            "sha256": _sha(checkpoint), "source_iteration": 1,
+        },
+        "specs": {name: str((root / name).resolve()) for name in (
+            "kpi_inference.yaml", "test_inference.yaml",
+            "gap_loose.yaml", "gap_strict.yaml",
+        )},
+    }))
+    kpi_status = root / "kpi_status.json"
+    test_status = root / "test_status.json"
+    _successful_status(kpi_status)
+    _successful_status(test_status)
+    gap_artifacts = []
+    for kind, confidence in (("loose", 0.3), ("strict", 0.8)):
+        status = root / f"{kind}_status.json"
+        report = root / f"{kind}_gap_report.json"
+        boxes = root / f"{kind}_box_gaps.parquet"
+        _successful_status(status)
+        report.write_text(json.dumps({
+            "kpi": f"kpi_{kind}", "counts_by_type": {"FP": 2, "FN": 1},
+            "counts_by_class": {"defect": {"FP": 2, "FN": 1}},
+            "settings": {"iou_threshold": 0.5, "conf_threshold": confidence,
+                         "min_area": 0},
+        }))
+        boxes.write_bytes(b"PAR1")
+        gap_artifacts.extend([
+            f"{kind}_status={status}", f"{kind}_gap_report={report}",
+            f"{kind}_box_gaps={boxes}",
+        ])
+    return {
+        "iteration_training": [
+            f"checkpoint_selection={selection}", f"main_status={main_status}",
+        ],
+        "iteration_measurement": [
+            f"measurement_manifest={manifest}",
+            f"kpi_inference_status={kpi_status}",
+            f"test_inference_status={test_status}",
+        ],
+        "iteration_gaps": gap_artifacts,
+    }
+
+
 def test_commit_enforces_order_and_completes_after_final_gaps(tmp_path: Path) -> None:
     state, artifact = _state(tmp_path)
+    iteration_artifacts = _iteration_artifacts(tmp_path)
     stages = [("candidate_cache", 0), ("baseline_measurement", 0),
               ("baseline_gaps", 0), ("iteration_retrieval", 1),
               ("iteration_admission", 1), ("iteration_training", 1),
@@ -129,12 +195,74 @@ def test_commit_enforces_order_and_completes_after_final_gaps(tmp_path: Path) ->
     for stage, iteration in stages:
         values = (
             _retrieval_artifacts(tmp_path)
-            if stage == "iteration_retrieval" else [f"done={artifact}"]
+            if stage == "iteration_retrieval" else
+            iteration_artifacts.get(stage, [f"done={artifact}"])
         )
         value = MODULE.commit(state, stage, iteration, values)
     assert value["status"] == "COMPLETE" and value["next_stage"] is None
     assert len(value["events"]) == len(stages)
     assert len((tmp_path / "loop_log.jsonl").read_text().splitlines()) == len(stages)
+
+
+def test_training_rejects_false_complete_wrapper_status(tmp_path: Path) -> None:
+    state, _ = _state(tmp_path)
+    value = json.loads(state.read_text())
+    value.update(status="RUNNING", next_stage="iteration_training",
+                 current_iteration=1, last_stage="iteration_admission")
+    state.write_text(json.dumps(value))
+    artifacts = _iteration_artifacts(tmp_path)["iteration_training"]
+    bad_status = tmp_path / "main_status.json"
+    _successful_status(bad_status, exit_code=1)
+
+    with pytest.raises(ValueError, match="does not prove terminal success"):
+        MODULE.commit(state, "iteration_training", 1, artifacts)
+
+
+def test_gaps_reject_missing_terminal_status_evidence(tmp_path: Path) -> None:
+    state, _ = _state(tmp_path)
+    value = json.loads(state.read_text())
+    value.update(status="RUNNING", next_stage="iteration_gaps",
+                 current_iteration=1, last_stage="iteration_measurement")
+    state.write_text(json.dumps(value))
+    artifacts = [
+        value for value in _iteration_artifacts(tmp_path)["iteration_gaps"]
+        if not value.startswith(("loose_status=", "strict_status="))
+    ]
+
+    with pytest.raises(ValueError, match="requires artifact loose_status"):
+        MODULE.commit(state, "iteration_gaps", 1, artifacts)
+
+
+def test_training_rejects_complete_but_malformed_checkpoint_report(tmp_path: Path) -> None:
+    state, _ = _state(tmp_path)
+    value = json.loads(state.read_text())
+    value.update(status="RUNNING", next_stage="iteration_training",
+                 current_iteration=1, last_stage="iteration_admission")
+    state.write_text(json.dumps(value))
+    artifacts = _iteration_artifacts(tmp_path)["iteration_training"]
+    selection = tmp_path / "checkpoint_selection.json"
+    report = json.loads(selection.read_text())
+    report.pop("selected_checkpoint")
+    selection.write_text(json.dumps(report))
+
+    with pytest.raises(ValueError, match="existing checkpoint"):
+        MODULE.commit(state, "iteration_training", 1, artifacts)
+
+
+def test_gaps_reject_complete_status_with_inconsistent_report(tmp_path: Path) -> None:
+    state, _ = _state(tmp_path)
+    value = json.loads(state.read_text())
+    value.update(status="RUNNING", next_stage="iteration_gaps",
+                 current_iteration=1, last_stage="iteration_measurement")
+    state.write_text(json.dumps(value))
+    artifacts = _iteration_artifacts(tmp_path)["iteration_gaps"]
+    report_path = tmp_path / "strict_gap_report.json"
+    report = json.loads(report_path.read_text())
+    report["counts_by_type"]["FN"] = 99
+    report_path.write_text(json.dumps(report))
+
+    with pytest.raises(ValueError, match="type and class counts disagree"):
+        MODULE.commit(state, "iteration_gaps", 1, artifacts)
 
 
 def test_commit_rejects_out_of_order_stage(tmp_path: Path) -> None:
