@@ -53,13 +53,16 @@ def _source(images: Path, row: dict[str, Any]) -> Path:
     file_name = str(row.get("file_name") or "").strip()
     if not file_name:
         raise ValueError("KPI COCO image lacks file_name")
+    relative = Path(file_name)
+    if relative.is_absolute() or ".." in relative.parts:
+        raise ValueError(
+            f"KPI COCO file_name escapes the configured images root: {file_name}"
+        )
     root = images.resolve()
-    path = (root / file_name).resolve()
-    try:
-        path.relative_to(root)
-    except ValueError as exc:
-        raise ValueError(f"KPI COCO file_name escapes the configured images root: {file_name}") from exc
-    return path
+    path = root / relative
+    if not path.is_file():
+        raise FileNotFoundError(f"KPI image is missing: {path}")
+    return path.resolve()
 
 
 def _image_index(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:

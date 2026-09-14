@@ -231,3 +231,22 @@ def test_kpi_image_index_preserves_numeric_id_and_nested_stem_aliases() -> None:
     index = MODULE._image_index([row])
     assert index["7"] is row
     assert index["kpi_name"] is row
+
+
+def test_kpi_source_allows_normalized_symlink_to_raw_image(tmp_path: Path) -> None:
+    raw = tmp_path / "raw" / "image.png"
+    raw.parent.mkdir()
+    raw.write_bytes(b"image")
+    normalized = tmp_path / "normalized"
+    normalized.mkdir()
+    (normalized / "image.png").symlink_to(raw)
+
+    assert MODULE._source(normalized, {"file_name": "image.png"}) == raw.resolve()
+
+
+@pytest.mark.parametrize("file_name", ("../raw.png", "/absolute/raw.png"))
+def test_kpi_source_rejects_lexical_escape(tmp_path: Path, file_name: str) -> None:
+    images = tmp_path / "normalized"
+    images.mkdir()
+    with pytest.raises(ValueError, match="escapes the configured images root"):
+        MODULE._source(images, {"file_name": file_name})
