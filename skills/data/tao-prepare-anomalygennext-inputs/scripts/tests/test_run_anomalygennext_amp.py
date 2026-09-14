@@ -101,16 +101,24 @@ def test_run_keeps_native_logs_off_machine_readable_stdout(
     frozen.write_text(yaml.safe_dump(config, sort_keys=False))
     config_path = tmp_path / "config.yaml"
     config_path.write_bytes(frozen.read_bytes())
+    sam2 = tmp_path / "sam2.1_hiera_large.pt"
+    sam2.write_bytes(b"checkpoint")
 
     def fake_run(command: list[str], *, check: bool, stdout: object) -> None:
         assert check is True
         assert stdout is sys.stderr
+        assert str(sam2.resolve()) in command
         print("native placement progress", file=stdout)
         (tmp_path / "amp" / "testcase.jsonl").write_text("{}\n")
 
     monkeypatch.setattr(MODULE.subprocess, "run", fake_run)
-    report = MODULE.run(config_path, tmp_path)
+    report = MODULE.run(config_path, tmp_path, sam2)
     captured = capsys.readouterr()
     assert report["testcase"].endswith("amp/testcase.jsonl")
     assert captured.out == ""
     assert "native placement progress" in captured.err
+
+
+def test_run_requires_sam2_checkpoint(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="SAM2.1 checkpoint"):
+        MODULE.run(tmp_path / "config.yaml", tmp_path, tmp_path / "missing.pt")

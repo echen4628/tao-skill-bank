@@ -69,11 +69,16 @@ then submit the `run_amp` action:
 ```bash
 scripts/run_anomalygennext_amp.py \
   --config /path/to/filtering.yaml \
-  --prepared-root /existing/result/root
+  --prepared-root /existing/result/root \
+  --sam2-checkpoint /models/sam2.1_hiera_large.pt
 ```
 
 This writes `knn_candidates.parquet`, the native AMP request, and
 `amp/testcase.jsonl`. Finalize it in the same durable result root:
+
+The public 1.1 image includes AMP code but not the SAM2.1 payload. Expose the
+checkpoint as a read-only runtime input; the wrapper injects it into upstream
+AMP without modifying the source image or the frozen filtering config.
 
 ```bash
 scripts/finalize_anomalygennext_inputs.py --prepared-root /existing/result/root

@@ -29,6 +29,10 @@ requests for every eligible pair. It rejects missing, non-finite, zero-norm, or
 width-mismatched embeddings. AMP itself remains owned by the container-native
 `anomalygen.scripts.auto_mask_placement.roi_place` entry point.
 
+Native AMP also requires a SAM2.1 Hiera Large checkpoint supplied separately
+at launch time. It is a runtime model input rather than part of the frozen
+dataset/filtering configuration.
+
 `finalize_inputs` retains the configured number of successful neighbors per FN.
 Both aligned mask branches must match the clean image and cover neither zero nor
 all pixels. It copies accepted masks under the prepared root and hashes every

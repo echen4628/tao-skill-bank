@@ -37,6 +37,8 @@ actions:
         type: file
       prepared_root:
         type: folder
+      sam2_checkpoint:
+        type: file
     outputs:
       amp_testcase:
         type: file
@@ -47,6 +49,7 @@ actions:
     args:
       config: --config {config}
       prepared_root: --prepared-root {prepared_root}
+      sam2_checkpoint: --sam2-checkpoint {sam2_checkpoint}
   finalize_inputs:
     command: scripts/finalize_anomalygennext_inputs.py
     mode: args

@@ -126,14 +126,26 @@ def plan(root: Path, config: dict[str, Any]) -> dict[str, Any]:
             "embedding_dim": int(clean_vectors.shape[1])}
 
 
-def run(config_path: Path, root: Path) -> dict[str, Any]:
+def run(config_path: Path, root: Path, sam2_checkpoint: Path) -> dict[str, Any]:
+    if not sam2_checkpoint.is_file():
+        raise FileNotFoundError(f"SAM2.1 checkpoint is missing: {sam2_checkpoint}")
     frozen = root / "prepared_anomalygennext_inputs" / "filtering_config.yaml"
     if config_path.read_bytes() != frozen.read_bytes():
         raise ValueError("config differs from the frozen preparation snapshot")
     config = yaml.safe_load(frozen.read_text())
     report = plan(root, config)
     amp = config.get("amp") or {}
-    command = [sys.executable, "-m", "anomalygen.scripts.auto_mask_placement.roi_place",
+    # The public 1.1 image carries the AMP source but not the SAM2.1 payload,
+    # while upstream currently hard-codes its in-image checkpoint location.
+    # Override that module constant in the child before executing native AMP.
+    bootstrap = (
+        "import runpy,sys; "
+        "from anomalygen.auto_mask_placement.roi_generation import model; "
+        "model._SAM2_CKPT=sys.argv.pop(1); "
+        "runpy.run_module('anomalygen.scripts.auto_mask_placement.roi_place', "
+        "run_name='__main__')"
+    )
+    command = [sys.executable, "-c", bootstrap, str(sam2_checkpoint.resolve()),
                "--input_pair_path", str(root / "amp" / "amp_samples.json"),
                "--defect_desc", str(Path(config["defect_spec"]).resolve()),
                "--output_dir", str(root / "amp"), "--n_seeds", "1",
@@ -154,8 +166,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True)
     parser.add_argument("--prepared-root", required=True)
+    parser.add_argument("--sam2-checkpoint", type=Path, required=True)
     args = parser.parse_args()
-    result = run(Path(args.config).resolve(), Path(args.prepared_root).resolve())
+    result = run(Path(args.config).resolve(), Path(args.prepared_root).resolve(),
+                 args.sam2_checkpoint.resolve())
     print(json.dumps(result, sort_keys=True))
     return 0
 
