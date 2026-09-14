@@ -36,6 +36,12 @@ def _read_json_artifact(artifacts: dict[str, dict[str, Any]], name: str) -> Any:
     return json.loads(Path(artifacts[name]["path"]).read_text())
 
 
+def _nonzero_counts(value: Any) -> dict[str, int]:
+    if not isinstance(value, dict):
+        raise ValueError("query counts must be a JSON object")
+    return {str(key): int(count) for key, count in value.items() if int(count)}
+
+
 def _validate_iteration_retrieval(
     state: dict[str, Any], iteration: int, artifacts: dict[str, dict[str, Any]]
 ) -> None:
@@ -81,7 +87,9 @@ def _validate_iteration_retrieval(
     defect_ledger = _read_json_artifact(artifacts, "defect_ledger")
     clean_ledger = _read_json_artifact(artifacts, "clean_ledger")
     counts = preview.get("counts") or {}
-    if report.get("queries") != query_manifest.get("query_counts") or counts.get("queries") != report.get("queries"):
+    if (_nonzero_counts(report.get("queries"))
+            != _nonzero_counts(query_manifest.get("query_counts"))
+            or counts.get("queries") != report.get("queries")):
         raise ValueError("routing/query counts disagree")
     if counts.get("selected") != report.get("selected"):
         raise ValueError("routing selected counts disagree")

@@ -32,7 +32,9 @@ def _state(root: Path) -> tuple[Path, Path]:
     return state, artifact
 
 
-def _retrieval_artifacts(root: Path, stale: bool = False) -> list[str]:
+def _retrieval_artifacts(
+    root: Path, stale: bool = False, sparse_queries: bool = False
+) -> list[str]:
     query = root / "query_manifest.json"
     report = root / "routing_report.json"
     mined = root / "mined_manifest.json"
@@ -40,24 +42,43 @@ def _retrieval_artifacts(root: Path, stale: bool = False) -> list[str]:
     clean = root / "clean_ledger.json"
     synthetic = root / "synthetic_plan.json"
     index = root / "admission_index.npy"
+    query_counts = (
+        {"strict_fn": 1}
+        if sparse_queries
+        else {"strict_fn": 1, "near_miss_fp": 1, "background_fp": 1}
+    )
     query.write_text(json.dumps({
         "status": "COMPLETE", "iteration": 1,
-        "query_counts": {"strict_fn": 1, "near_miss_fp": 1, "background_fp": 1},
+        "query_counts": query_counts,
     }))
-    selected = {
-        "strict_fn_real": 1, "near_miss_real": 1,
-        "uniform_real": 0, "background_clean": 1,
-    }
+    report_queries = (
+        {"strict_fn": 1, "near_miss_fp": 0, "background_fp": 0}
+        if sparse_queries
+        else {"strict_fn": 1, "near_miss_fp": 1, "background_fp": 1}
+    )
+    selected = (
+        {"strict_fn_real": 1, "near_miss_real": 0,
+         "uniform_real": 0, "background_clean": 0}
+        if sparse_queries
+        else {"strict_fn_real": 1, "near_miss_real": 1,
+              "uniform_real": 0, "background_clean": 1}
+    )
     report.write_text(json.dumps({
-        "queries": {"strict_fn": 1, "near_miss_fp": 1, "background_fp": 1},
+        "queries": report_queries,
         "selected": selected,
     }))
-    mined.write_text(json.dumps([
-        {"branch": "strict_fn_real"}, {"branch": "near_miss_real"},
-        {"branch": "background_clean"},
-    ]))
-    defect.write_text(json.dumps(["real-a", "real-b"]))
-    clean.write_text(json.dumps(["clean-a"]))
+    mined_rows = [{"branch": "strict_fn_real"}]
+    defect_rows = ["real-a"]
+    clean_rows = []
+    if not sparse_queries:
+        mined_rows += [
+            {"branch": "near_miss_real"}, {"branch": "background_clean"},
+        ]
+        defect_rows.append("real-b")
+        clean_rows.append("clean-a")
+    mined.write_text(json.dumps(mined_rows))
+    defect.write_text(json.dumps(defect_rows))
+    clean.write_text(json.dumps(clean_rows))
     synthetic.write_text("{}")
     index.write_bytes(b"index")
     outputs = {}
@@ -78,9 +99,9 @@ def _retrieval_artifacts(root: Path, stale: bool = False) -> list[str]:
             "clean_cumulative_cap_per_real": 1.0,
         },
         "counts": {
-            "queries": {"strict_fn": 1, "near_miss_fp": 1, "background_fp": 1},
-            "selected": selected, "manifest_records": 3,
-            "defect_ledger": 2, "clean_ledger": 1,
+            "queries": report_queries,
+            "selected": selected, "manifest_records": len(mined_rows),
+            "defect_ledger": len(defect_rows), "clean_ledger": len(clean_rows),
         },
         "inputs": {
             "routing_policy": {"sha256": "routing-sha"},
@@ -155,6 +176,21 @@ def test_commit_rejects_stale_routing_report_hash(tmp_path: Path) -> None:
     state.write_text(json.dumps(value))
     with pytest.raises(ValueError, match="hash/path mismatch for routing_report"):
         MODULE.commit(state, "iteration_retrieval", 1, _retrieval_artifacts(tmp_path, stale=True))
+
+
+def test_commit_accepts_omitted_zero_count_query_branches(tmp_path: Path) -> None:
+    state, _ = _state(tmp_path)
+    value = json.loads(state.read_text())
+    value.update(status="RUNNING", next_stage="iteration_retrieval",
+                 current_iteration=0, last_stage="baseline_gaps")
+    state.write_text(json.dumps(value))
+
+    result = MODULE.commit(
+        state, "iteration_retrieval", 1,
+        _retrieval_artifacts(tmp_path, sparse_queries=True),
+    )
+
+    assert result["next_stage"] == "iteration_admission"
 
 
 def _synthesis_state(root: Path) -> tuple[Path, Path, dict]:
