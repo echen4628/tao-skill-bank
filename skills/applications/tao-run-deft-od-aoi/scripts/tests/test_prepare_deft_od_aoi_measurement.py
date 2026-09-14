@@ -145,6 +145,7 @@ def test_true_fresh_rtdetr_cold_start_skips_incompatible_base_inference(
     )["inference_ann_path"]
     assert predictions == str(tmp_path / "specs/cold_start_predictions")
     assert Path(predictions).is_dir()
+    assert (Path(predictions) / "kpi.txt").read_text() == ""
 
 
 def test_measurement_binds_specs_to_durable_copyback_path(tmp_path: Path) -> None:

@@ -1,6 +1,9 @@
 network_arch: tao-analyze-gaps-od-map
 type: data
 container_image: nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services  # versions-key: images.tao_toolkit.data_services
+# The action spec has no GPU-count field, so there is no path to read here.
+# This does NOT make the action CPU-compatible: the TAO Data Services launcher
+# probes nvidia-smi at startup. Consumers must allocate one visible GPU.
 gpu_spec_key: null
 required_credentials: []
 actions:

@@ -110,6 +110,8 @@ def prepare(policy_path: Path, checkpoint: Path, predictions: Path,
     if cold_start:
         cold_start_predictions = output / "cold_start_predictions"
         cold_start_predictions.mkdir()
+        for ground_truth_label in gt.glob("*.txt"):
+            (cold_start_predictions / ground_truth_label.name).touch()
         gap_predictions = published / cold_start_predictions.name
     elif backend == "rtdetr":
         classmap = output / "inference_classmap.txt"

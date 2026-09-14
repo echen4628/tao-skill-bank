@@ -30,6 +30,12 @@ The container entrypoint is:
 gap_analysis object_detection -e /absolute/path/to/object_detection.yaml
 ```
 
+Allocate exactly one NVIDIA GPU even though the experiment spec has no GPU
+field. `gpu_spec_key: null` means only that no GPU count can be read from the
+spec; it does not mean this action is CPU-compatible. The TAO Data Services
+launcher calls `nvidia-smi` during startup and fails before analysis when no GPU
+runtime is visible.
+
 ## Inputs
 
 Required spec fields:
@@ -100,20 +106,23 @@ Do not pass `--user $(id -u):$(id -g)`; some TAO DS images call `getpass.getuser
 
 ## Preflight
 
-1. Verify Docker access:
+1. Confirm that the selected platform can allocate one NVIDIA GPU and that
+   `nvidia-smi -L` succeeds inside the data-services container.
+
+2. Verify Docker access:
 
 ```bash
 docker info > /dev/null
 ```
 
-2. Resolve and pull the data-services image if needed:
+3. Resolve and pull the data-services image if needed:
 
 ```bash
 DS_IMAGE=nvcr.io/nvidia/tao/tao-toolkit:7.2.0-data-services  # versions-key: images.tao_toolkit.data_services
 docker image inspect "$DS_IMAGE" > /dev/null || docker pull "$DS_IMAGE"
 ```
 
-3. Confirm `RUN_ROOT` contains the spec, both annotation sources, and the image directory. Mount `RUN_ROOT` to the same absolute path inside Docker.
+4. Confirm `RUN_ROOT` contains the spec, both annotation sources, and the image directory. Mount `RUN_ROOT` to the same absolute path inside Docker.
 
 ## Outputs
 
