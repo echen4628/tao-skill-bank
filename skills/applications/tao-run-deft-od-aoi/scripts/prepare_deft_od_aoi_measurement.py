@@ -100,7 +100,18 @@ def prepare(policy_path: Path, checkpoint: Path, predictions: Path,
     published_gt = published / gt.name
     projection = _kitti(Path(kpi["coco"]), gt)
     spec_names = ["gap_loose.yaml", "gap_strict.yaml"]
-    if backend == "rtdetr":
+    baseline_mode = str(policy.get("baseline_mode") or "checkpoint_inference")
+    cold_start = (
+        checkpoint_role == "routing_seed"
+        and backend == "rtdetr"
+        and baseline_mode == "cold_start_all_kpi_gt"
+    )
+    gap_predictions = predictions
+    if cold_start:
+        cold_start_predictions = output / "cold_start_predictions"
+        cold_start_predictions.mkdir()
+        gap_predictions = published / cold_start_predictions.name
+    elif backend == "rtdetr":
         classmap = output / "inference_classmap.txt"
         classmap.write_text("background\ndefect\n")
         _yaml(output / "kpi_inference.yaml",
@@ -113,7 +124,7 @@ def prepare(policy_path: Path, checkpoint: Path, predictions: Path,
     for kind in ("loose", "strict"):
         gap = policy["gap"]
         spec = {"ground_truth_ann_path": str(published_gt),
-                "inference_ann_path": str(predictions),
+                "inference_ann_path": str(gap_predictions),
                 "images_dir": str(Path(kpi["images"]).resolve()),
                 "results_dir": str((results_root / f"gap_{kind}").resolve()),
                 "kpi": f"kpi_{kind}", "input_format": "kitti",
@@ -124,6 +135,8 @@ def prepare(policy_path: Path, checkpoint: Path, predictions: Path,
                 "default_ap50_threshold": 0.0}
         _yaml(output / f"gap_{kind}.yaml", spec)
     report = {"status": "COMPLETE", "checkpoint": str(checkpoint.resolve()),
+              "baseline_mode": baseline_mode,
+              "cold_start": cold_start,
               "checkpoint_provenance": {
                   "role": checkpoint_role,
                   "path": str(checkpoint.resolve()),

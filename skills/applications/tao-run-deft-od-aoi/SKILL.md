@@ -134,7 +134,11 @@ paths remain available; portable staging should use `copy`.
 
 ## Measurement specs
 
-In `true_fresh` mode, baseline routing uses the public base checkpoint. After
+In true-fresh RT-DETR mode, baseline routing uses
+`cold_start_all_kpi_gt`: it skips inference with the incompatible warehouse
+head and passes empty predictions to packaged gap analysis, making every KPI
+ground-truth box an FN. A binary-compatible seed may use
+`checkpoint_inference` in `warm_seeded_historical` mode. After
 iteration *n*, its selected checkpoint routes iteration *n+1*, while every
 probe and main training job still initializes from the public base. Prepare
 both inference specs and the two gap-analysis specs together:

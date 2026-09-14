@@ -2,6 +2,7 @@ class_name: defect
 max_iterations: null
 platform: null
 reproduction_mode: true_fresh
+baseline_mode: auto
 base_checkpoint: null
 routing_seed_checkpoint: null
 model:

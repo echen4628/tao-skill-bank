@@ -59,6 +59,7 @@ def test_initialize_freezes_real_only_disjoint_contract(tmp_path: Path) -> None:
     assert Path(state["classmap"]).read_text() == "background\ndefect\n"
     assert state["roles"]["clean"]["annotation_count"] == 0
     assert state["reproduction_mode"] == "true_fresh"
+    assert state["baseline_mode"] == "cold_start_all_kpi_gt"
     assert state["training_base_checkpoint"]["sha256"] == state["routing_seed_checkpoint"]["sha256"]
     assert Path(state["routing_policy"]).is_file()
 
@@ -148,6 +149,7 @@ def test_initialize_selects_yolo_leaf_without_changing_data_contract(tmp_path: P
     state = MODULE.initialize(config, tmp_path / "results")
     assert state["mode"] == "yolo_real_only"
     assert state["detector_skill"] == "tao-train-yolo"
+    assert state["baseline_mode"] == "checkpoint_inference"
     assert state["roles"]["clean"]["annotation_count"] == 0
 
 

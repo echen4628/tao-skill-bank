@@ -103,6 +103,50 @@ def test_yolo_measurement_emits_common_kitti_and_gap_specs_only(tmp_path: Path) 
     assert followup["checkpoint_provenance"]["source_iteration"] == 1
 
 
+def test_true_fresh_rtdetr_cold_start_skips_incompatible_base_inference(
+        tmp_path: Path) -> None:
+    sources = {}
+    for role in ("kpi", "test"):
+        images = tmp_path / role
+        images.mkdir()
+        (images / f"{role}.png").write_bytes(b"image")
+        coco = tmp_path / f"{role}.json"
+        coco.write_text(json.dumps({
+            "images": [{"id": 1, "file_name": f"{role}.png"}],
+            "annotations": ([{"id": 1, "image_id": 1, "category_id": 1,
+                               "bbox": [1, 2, 3, 4]}] if role == "kpi" else []),
+            "categories": [{"id": 1, "name": "defect"}],
+        }))
+        sources[role] = {"images": str(images), "coco": str(coco)}
+    checkpoint = tmp_path / "warehouse-seven-class.pth"
+    checkpoint.write_bytes(b"warehouse")
+    policy = tmp_path / "policy.yaml"
+    policy.write_text(yaml.safe_dump({
+        "model": {"backend": "rtdetr"},
+        "baseline_mode": "cold_start_all_kpi_gt",
+        "base_checkpoint": str(checkpoint),
+        "routing_seed_checkpoint": str(checkpoint),
+        "sources": sources,
+        "gap": {"inference_confidence": 0.001, "loose_confidence": 0.3,
+                "strict_confidence": 0.8, "match_iou": 0.5},
+    }))
+
+    report = MODULE.prepare(
+        policy, checkpoint, tmp_path / "unused/kpi/labels", tmp_path / "measure",
+        tmp_path / "specs", "routing_seed", 0,
+    )
+
+    assert report["cold_start"] is True
+    assert set(report["specs"]) == {"gap_loose.yaml", "gap_strict.yaml"}
+    assert not (tmp_path / "specs/kpi_inference.yaml").exists()
+    assert not (tmp_path / "specs/test_inference.yaml").exists()
+    predictions = yaml.safe_load(
+        (tmp_path / "specs/gap_strict.yaml").read_text()
+    )["inference_ann_path"]
+    assert predictions == str(tmp_path / "specs/cold_start_predictions")
+    assert Path(predictions).is_dir()
+
+
 def test_measurement_binds_specs_to_durable_copyback_path(tmp_path: Path) -> None:
     sources = {}
     for role in ("kpi", "test"):

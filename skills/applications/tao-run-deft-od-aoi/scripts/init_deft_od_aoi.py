@@ -196,6 +196,20 @@ def initialize(
             raise ValueError("training.probes_enabled must be boolean")
         if int(training.get("probe_start_iteration", 0)) < 1:
             raise ValueError("training.probe_start_iteration must be positive")
+    baseline_mode = str(policy.get("baseline_mode") or "auto")
+    if baseline_mode == "auto":
+        baseline_mode = (
+            "cold_start_all_kpi_gt"
+            if backend == "rtdetr" and mode == "true_fresh"
+            else "checkpoint_inference"
+        )
+    if baseline_mode not in {"cold_start_all_kpi_gt", "checkpoint_inference"}:
+        raise ValueError("unsupported baseline_mode")
+    if baseline_mode == "cold_start_all_kpi_gt" and not (
+            backend == "rtdetr" and mode == "true_fresh"):
+        raise ValueError(
+            "cold_start_all_kpi_gt is only valid for true-fresh RT-DETR"
+        )
     role_reports = {name: _role(name, policy["sources"][name]) for name in ROLES}
     owners: dict[str, str] = {}
     for name, report in role_reports.items():
@@ -228,6 +242,7 @@ def initialize(
                                   "vae_path", "nn_backbone", "result_handoff")):
                 raise ValueError(f"synthesis route {name} needs checkpoint/recipe or finetune inputs")
     output.mkdir(parents=True)
+    policy["baseline_mode"] = baseline_mode
     policy["base_checkpoint"] = str(checkpoint)
     policy["routing_seed_checkpoint"] = str(routing_seed)
     policy["sources"] = {name: {"images": role_reports[name]["images"],
@@ -256,6 +271,7 @@ def initialize(
              "next_stage": "synthesis_bootstrap" if bootstrap_required else "candidate_cache",
              "max_iterations": policy["max_iterations"], "platform": policy["platform"],
              "reproduction_mode": mode,
+             "baseline_mode": baseline_mode,
              "training_base_checkpoint": {"path": str(checkpoint), "sha256": _sha(checkpoint)},
              "routing_seed_checkpoint": {"path": str(routing_seed), "sha256": _sha(routing_seed)},
              # Retained for existing leaf helpers; training always consumes this value.

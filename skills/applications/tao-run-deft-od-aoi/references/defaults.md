@@ -8,6 +8,8 @@ policy once.
 
 - An installed supported execution platform; never choose among peers silently.
 - `max_iterations`.
+- A baseline mode. `auto` resolves to `cold_start_all_kpi_gt` for true-fresh
+  RT-DETR and `checkpoint_inference` otherwise.
 - Four normalized roles described in `data-contract.md`.
 - One detector backend (`rtdetr` or `yolo`) and one
   compatible trainable base checkpoint. Every iteration starts from this same

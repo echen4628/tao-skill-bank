@@ -22,10 +22,14 @@ completed outputs are immutable and reused by every iteration. Commit the
 
 ## 2. Baseline measurement and gaps
 
-Run `prepare_deft_od_aoi_measurement.py` with the frozen routing seed. In the
-default `true_fresh` mode, that seed is the same public checkpoint used to
-initialize every training job.
-For RT-DETR, submit KPI and test inference via `tao-train-rtdetr`. For YOLO,
+Run `prepare_deft_od_aoi_measurement.py` with the frozen routing seed. The
+default true-fresh RT-DETR mode resolves to `cold_start_all_kpi_gt`: the
+warehouse checkpoint has a non-binary head, so baseline inference is skipped
+and an empty prediction set goes through the packaged gap action, making every
+KPI ground-truth box an initial FN. This mode does not produce a baseline test
+metric. A binary-compatible seed may instead use `checkpoint_inference` with
+`warm_seeded_historical`. For later RT-DETR measurements, submit KPI and test
+inference via `tao-train-rtdetr`. For YOLO,
 use iteration-0 `write_yolo_specs.py` output and submit separate `evaluate`
 actions through `tao-train-yolo`. KPI controls selection; test is report-only.
 Submit the loose and strict gap specs via
