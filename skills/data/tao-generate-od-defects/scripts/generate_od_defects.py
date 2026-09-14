@@ -60,6 +60,17 @@ def _validate_offline_hf_cache(root: Path) -> None:
         )
 
 
+def _validate_base_checkpoint(root: Path) -> None:
+    model = root / "model"
+    if (not (root / "checkpoint.json").is_file()
+            or not (model / ".metadata").is_file()
+            or not any(model.glob("*.distcp"))):
+        raise ValueError(
+            "base checkpoint must be the Cosmos checkpoint parent containing "
+            "checkpoint.json and model/{.metadata,*.distcp}"
+        )
+
+
 def _validate_manifest(root: Path) -> None:
     manifest = root / "prepared_anomalygennext_inputs" / "prepared_inputs_manifest.json"
     if not manifest.is_file():
@@ -235,8 +246,9 @@ def main() -> int:
     parser.add_argument("--hf-cache", type=Path)
     parser.add_argument("--repo", type=Path, default=Path("/workspace/paidf-anomalygen"))
     args = parser.parse_args()
-    if args.output_dir.exists() or args.num_gpus < 1 or not args.base_checkpoint.exists():
-        raise ValueError("output must be new; GPU count positive; base checkpoint must exist")
+    if args.output_dir.exists() or args.num_gpus < 1:
+        raise ValueError("output must be new and GPU count must be positive")
+    _validate_base_checkpoint(args.base_checkpoint)
     if not args.repo.is_dir():
         raise FileNotFoundError(args.repo)
     env = os.environ

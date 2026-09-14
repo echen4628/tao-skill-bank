@@ -58,6 +58,17 @@ def test_offline_cache_requires_pinned_tokenizer_and_guardrail_repositories(
         MODULE._validate_offline_hf_cache(tmp_path)
 
 
+def test_base_checkpoint_requires_parent_of_dcp_model_directory(tmp_path: Path) -> None:
+    model = tmp_path / "model"
+    model.mkdir()
+    (tmp_path / "checkpoint.json").write_text("{}\n")
+    (model / ".metadata").write_bytes(b"metadata")
+    (model / "__0_0.distcp").write_bytes(b"shard")
+    MODULE._validate_base_checkpoint(tmp_path)
+    with pytest.raises(ValueError, match="checkpoint parent"):
+        MODULE._validate_base_checkpoint(model)
+
+
 def test_merge_validates_boxes_and_writes_binary_projection(tmp_path: Path) -> None:
     image = tmp_path / "generated.png"
     image.write_bytes(b"image")

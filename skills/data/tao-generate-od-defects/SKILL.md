@@ -43,7 +43,7 @@ and output directory, then submit the `generate` action:
 ```bash
 scripts/generate_od_defects.py \
   --inputs-dir /results/prepared_inputs \
-  --base-checkpoint /models/Cosmos3-Nano/model \
+  --base-checkpoint /models/Cosmos3-Nano \
   --output-dir /new/generation \
   --num-gpus 1
 ```
@@ -54,6 +54,8 @@ guardrail assets for offline execution. With the pinned 1.1 image, offline
 execution requires `Qwen/Qwen3-VL-8B-Instruct`,
 `Qwen/Qwen3Guard-Gen-0.6B`, `nvidia/Cosmos-Guardrail1`, and
 `nvidia/Cosmos3-Edge`; preflight verifies their blob and snapshot directories.
+The base checkpoint argument is the parent containing `checkpoint.json` and
+the `model/` DCP directory; native generation appends `model/` itself.
 
 ## Completion
 
