@@ -165,6 +165,32 @@ python3 skills/data/tao-generate-image-embeddings/scripts/verify_image_embedding
 
 The output parquet contains `filepath`, an `embedding` column of list-like vectors, and every extra column carried through from the input. Print its row count and column list after the run so the caller can confirm the embedding column exists.
 
+## Reuse A Compatible Cache
+
+When the encoder is frozen and a later input repeats earlier `filepath` values,
+materialize a new output from the earlier embedding parquet instead of invoking
+the GPU for those rows. Never reuse an existing output directory: write a new
+parquet and report for the current action.
+
+```bash
+python3 scripts/reuse_image_embeddings.py \
+  --current-input /current/input.parquet \
+  --current-spec /current/image_embeddings.yaml \
+  --cached-embeddings /prior/embeddings.parquet \
+  --cached-spec /prior/image_embeddings.yaml \
+  --fresh-embeddings /current/new_only_embeddings.parquet \
+  --output /current/materialized_embeddings.parquet \
+  --report /current/embedding_reuse_report.json
+```
+
+Omit `--fresh-embeddings` only for a full cache hit. The helper requires exact
+`model`, `model_path`, and `model_config_path` agreement, preserves current-row
+order and metadata, rejects duplicate paths, and records input/output hashes.
+For a migration or acceptance run, pass a full recomputed parquet through
+`--reference-embeddings`; every reused vector must match it. Exact comparison
+is the default. If two independent GPU runs show bounded floating-point drift,
+set an explicit `--reference-atol` and retain the reported maximum difference.
+
 ## Troubleshooting
 
 **`The subtask image_embeddings requires -e/--experiment_spec_file`**: rerun with `embedding image_embeddings -e "$SPEC"`.
