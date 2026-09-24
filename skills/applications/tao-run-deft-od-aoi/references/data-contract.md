@@ -49,4 +49,7 @@ that synthetic defects occupy at most
 `synthesis.cumulative_fraction_of_total_defects` of the combined real and
 synthetic defect pool. Existing records remain unchanged. The legacy
 `cumulative_fraction_of_real_defects` key remains readable with its original
-synthetic-to-real meaning.
+synthetic-to-real meaning. Admission also emits `admission_preview.json`. When
+overfetched crops
+do not contain enough novel parent images for a branch target, it admits the
+available parents and records the shortfall instead of failing the iteration.
