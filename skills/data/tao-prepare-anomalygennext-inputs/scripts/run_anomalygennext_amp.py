@@ -195,14 +195,19 @@ def _publish_paths(amp_dir: Path, runtime_root: Path, published_root: Path) -> N
             path.write_text(value.replace(source, destination), encoding="utf-8")
 
 
-def run(config_path: Path, root: Path, checkpoint_root: Path,
+def run(root: Path, checkpoint_root: Path, pool_dataset_root: Path,
         published_root: Path | None = None,
         repo: Path = Path("/workspace/paidf-anomalygen")) -> dict[str, Any]:
     hf_home = _validate_checkpoint_root(checkpoint_root, repo)
     frozen = root / "prepared_anomalygennext_inputs" / "filtering_config.yaml"
-    if config_path.read_bytes() != frozen.read_bytes():
-        raise ValueError("config differs from the frozen preparation snapshot")
     config = yaml.safe_load(frozen.read_text())
+    pool = pool_dataset_root.expanduser().resolve()
+    expected_pool = Path(config["pool_dataset_root"]).expanduser().resolve()
+    if not pool.is_dir() or expected_pool != pool:
+        raise ValueError(
+            "pool must be remounted at the compute path frozen during preparation: "
+            f"expected {expected_pool}, received {pool}"
+        )
     report = plan(root, config)
     amp = config.get("amp") or {}
     command = [sys.executable, "-m", "anomalygen.scripts.auto_mask_placement.roi_place",
@@ -226,14 +231,15 @@ def run(config_path: Path, root: Path, checkpoint_root: Path,
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", required=True)
     parser.add_argument("--prepared-root", required=True)
     parser.add_argument("--published-root", type=Path)
+    parser.add_argument("--pool-dataset-root", type=Path, required=True)
     parser.add_argument("--checkpoint-root", type=Path, required=True)
     parser.add_argument("--repo", type=Path, default=Path("/workspace/paidf-anomalygen"))
     args = parser.parse_args()
-    result = run(Path(args.config).resolve(), Path(args.prepared_root).resolve(),
-                 args.checkpoint_root.resolve(), args.published_root, args.repo.resolve())
+    result = run(Path(args.prepared_root).resolve(), args.checkpoint_root.resolve(),
+                 args.pool_dataset_root.resolve(), args.published_root,
+                 args.repo.resolve())
     print(json.dumps(result, sort_keys=True))
     return 0
 
