@@ -60,6 +60,19 @@ def _policy(root: Path) -> Path:
     return policy
 
 
+def _add_kpi(policy: Path, image: Path) -> None:
+    document = yaml.safe_load(policy.read_text())
+    coco = image.parent / "kpi.json"
+    coco.write_text(json.dumps({
+        "images": [{"id": 1, "file_name": image.name, "source_path": str(image),
+                    "deft_od_aoi": {"benchmark": "visa", "texture": "pcb1",
+                                    "defect_type": "bad"}}],
+        "annotations": [], "categories": [{"id": 1, "name": "defect"}],
+    }))
+    document["sources"]["kpi"] = {"images": str(image.parent), "coco": str(coco)}
+    policy.write_text(yaml.safe_dump(document))
+
+
 def test_candidate_cache_uses_defect_crops_and_clean_grid(tmp_path: Path) -> None:
     report = MODULE.candidates(_policy(tmp_path), tmp_path / "candidates")
     assert report == {"real": 1, "clean": 5}
@@ -114,6 +127,7 @@ def test_candidate_cache_applies_exif_orientation_before_cropping(tmp_path: Path
 
 def test_queries_route_fn_near_miss_and_background_fp(tmp_path: Path) -> None:
     policy = _policy(tmp_path)
+    MODULE.candidates(policy, tmp_path / "candidates")
     query_image = tmp_path / "query.png"
     _image(query_image)
     document = json.loads(policy.read_text()) if policy.suffix == ".json" else yaml.safe_load(policy.read_text())
@@ -126,7 +140,6 @@ def test_queries_route_fn_near_miss_and_background_fp(tmp_path: Path) -> None:
                                 "annotations": [], "categories": [{"id": 1, "name": "defect"}]}))
     document["sources"]["kpi"] = {"images": str(tmp_path), "coco": str(kpi)}
     policy.write_text(yaml.safe_dump(document))
-    MODULE.candidates(policy, tmp_path / "candidates")
     strict = tmp_path / "strict.parquet"
     loose = tmp_path / "loose.parquet"
     pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
@@ -148,41 +161,6 @@ def test_queries_route_fn_near_miss_and_background_fp(tmp_path: Path) -> None:
     assert real_mining["desired_unique_count"] == 1
     assert clean_mining["desired_unique_count"] == 5
     assert real_mining["candidate_expansion_factor"] == 15
-
-
-@pytest.mark.parametrize(
-    ("size", "box", "expected_box", "expected_padding"),
-    [
-        ((32, 32), (0, 0, 2, 2), (0, 0, 8, 8), (0, 0, 0, 0)),
-        ((32, 32), (30, 30, 32, 32), (24, 24, 32, 32), (0, 0, 0, 0)),
-        ((5, 3), (0, 0, 1, 1), (0, 0, 5, 3), (3, 4, 0, 1)),
-        ((32, 32), (4, 5, 20, 24), (4, 5, 20, 24), (0, 0, 0, 0)),
-    ],
-)
-def test_minimum_crop_geometry_expands_then_pads_only_when_required(
-    size: tuple[int, int], box: tuple[int, int, int, int],
-    expected_box: tuple[int, int, int, int], expected_padding: tuple[int, int, int, int],
-) -> None:
-    assert MODULE._minimum_crop_geometry(box, *size) == (expected_box, expected_padding)
-
-
-def test_tiny_gap_crops_are_embedding_safe_at_boundaries(tmp_path: Path) -> None:
-    policy = _policy(tmp_path)
-    query_image = tmp_path / "narrow.png"
-    Image.fromarray(np.full((3, 5, 3), 80, dtype=np.uint8)).save(query_image)
-    strict = tmp_path / "strict.parquet"
-    loose = tmp_path / "loose.parquet"
-    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
-                   "bbox": [0, 0, 1, 1], "best_iou": 0.0}]).to_parquet(strict)
-    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FP",
-                   "bbox": [4, 2, 5, 3], "best_iou": 0.01}]).to_parquet(loose)
-
-    MODULE.queries(policy, strict, loose, 1, tmp_path / "queries",
-                   tmp_path / "candidates", None)
-
-    crops = list((tmp_path / "queries/crops").rglob("*.png"))
-    assert len(crops) == 2
-    assert all(Image.open(path).size == (8, 8) for path in crops)
 
 
 def test_queries_exclude_crops_from_previously_admitted_sources(tmp_path: Path) -> None:
@@ -249,3 +227,147 @@ def test_queries_exclude_crops_from_previously_admitted_sources(tmp_path: Path) 
         str(candidates / "real-prior-a.png"), str(candidates / "real-prior-b.png")
     }
     assert set(clean_excluded.filepath) == {str(candidates / "clean-prior.png")}
+
+
+@pytest.mark.parametrize(
+    ("size", "box", "expected_box", "expected_padding"),
+    [
+        ((32, 32), (0, 0, 2, 2), (0, 0, 8, 8), (0, 0, 0, 0)),
+        ((32, 32), (30, 30, 32, 32), (24, 24, 32, 32), (0, 0, 0, 0)),
+        ((5, 3), (0, 0, 1, 1), (0, 0, 5, 3), (3, 4, 0, 1)),
+        ((32, 32), (4, 5, 20, 24), (4, 5, 20, 24), (0, 0, 0, 0)),
+    ],
+)
+def test_minimum_crop_geometry_expands_then_pads_only_when_required(
+    size: tuple[int, int], box: tuple[int, int, int, int],
+    expected_box: tuple[int, int, int, int], expected_padding: tuple[int, int, int, int],
+) -> None:
+    assert MODULE._minimum_crop_geometry(box, *size) == (expected_box, expected_padding)
+
+
+def test_tiny_gap_crops_are_embedding_safe_at_boundaries(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    query_image = tmp_path / "narrow.png"
+    Image.fromarray(np.full((3, 5, 3), 80, dtype=np.uint8)).save(query_image)
+    _add_kpi(policy, query_image)
+    MODULE.candidates(policy, tmp_path / "candidates")
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [0, 0, 1, 1], "best_iou": 0.0}]).to_parquet(strict)
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FP",
+                   "bbox": [4, 2, 5, 3], "best_iou": 0.01}]).to_parquet(loose)
+
+    MODULE.queries(policy, strict, loose, 1, tmp_path / "queries",
+                   tmp_path / "candidates", None)
+
+    crops = list((tmp_path / "queries/crops").rglob("*.png"))
+    assert len(crops) == 2
+    assert all(Image.open(path).size == (8, 8) for path in crops)
+
+
+def test_exhausted_role_is_skipped_while_other_role_continues(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    MODULE.candidates(policy, tmp_path / "candidates")
+    real_candidates = pd.read_parquet(tmp_path / "candidates/real_candidates.parquet")
+    previous = tmp_path / "previous.json"
+    previous.write_text(json.dumps({
+        "images": [{"id": 1, "file_name": "real.png",
+                    "source_path": real_candidates.iloc[0].source_filepath}],
+        "annotations": [], "categories": [{"id": 1, "name": "defect"}],
+    }))
+    query_image = tmp_path / "query.png"
+    _image(query_image)
+    _add_kpi(policy, query_image)
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [4, 4, 20, 20], "best_iou": 0.0}]).to_parquet(strict)
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FP",
+                   "bbox": [4, 4, 20, 20], "best_iou": 0.01}]).to_parquet(loose)
+
+    report = MODULE.queries(policy, strict, loose, 1, tmp_path / "queries",
+                            tmp_path / "candidates", None, previous)
+
+    assert report["enabled_roles"] == ["clean"]
+    assert report["role_status"]["real"]["status"] == "EXHAUSTED"
+    assert report["role_status"]["clean"]["status"] == "READY"
+    assert not (tmp_path / "queries/mine_real.yaml").exists()
+    assert (tmp_path / "queries/mine_clean.yaml").is_file()
+
+
+def test_all_roles_exhausted_emit_convergence_without_mining_specs(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    MODULE.candidates(policy, tmp_path / "candidates")
+    sources = []
+    for role in ("real", "clean"):
+        frame = pd.read_parquet(tmp_path / f"candidates/{role}_candidates.parquet")
+        sources.extend(sorted(set(frame.source_filepath.astype(str))))
+    previous = tmp_path / "previous.json"
+    previous.write_text(json.dumps({"images": [
+        {"id": index, "file_name": Path(source).name, "source_path": source}
+        for index, source in enumerate(sources, start=1)
+    ], "annotations": [], "categories": [{"id": 1, "name": "defect"}]}))
+    query_image = tmp_path / "query.png"
+    _image(query_image)
+    _add_kpi(policy, query_image)
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [4, 4, 20, 20], "best_iou": 0.0}]).to_parquet(strict)
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FP",
+                   "bbox": [4, 4, 20, 20], "best_iou": 0.01}]).to_parquet(loose)
+
+    report = MODULE.queries(policy, strict, loose, 1, tmp_path / "queries",
+                            tmp_path / "candidates", None, previous)
+
+    assert report["enabled_roles"] == [] and report["converged"] is True
+    assert {value["status"] for value in report["role_status"].values()} == {"EXHAUSTED"}
+    assert not list((tmp_path / "queries").glob("mine_*.yaml"))
+
+
+def test_all_roles_exhausted_do_not_preempt_pending_synthesis(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    value = yaml.safe_load(policy.read_text())
+    value["synthesis"] = {"enabled": True}
+    policy.write_text(yaml.safe_dump(value))
+    MODULE.candidates(policy, tmp_path / "candidates")
+    sources = []
+    for role in ("real", "clean"):
+        frame = pd.read_parquet(tmp_path / f"candidates/{role}_candidates.parquet")
+        sources.extend(sorted(set(frame.source_filepath.astype(str))))
+    previous = tmp_path / "previous.json"
+    previous.write_text(json.dumps({"images": [
+        {"id": index, "file_name": Path(source).name, "source_path": source}
+        for index, source in enumerate(sources, start=1)
+    ]}))
+    query_image = tmp_path / "query.png"
+    _image(query_image)
+    _add_kpi(policy, query_image)
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [4, 4, 20, 20], "best_iou": 0.0}]).to_parquet(strict)
+    pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"]).to_parquet(loose)
+
+    report = MODULE.queries(policy, strict, loose, 1, tmp_path / "queries",
+                            tmp_path / "candidates", None, previous)
+
+    assert report["enabled_roles"] == []
+    assert report["synthesis_pending"] is True and report["converged"] is False
+
+
+def test_queries_reject_missing_candidate_manifest(tmp_path: Path) -> None:
+    policy = _policy(tmp_path)
+    query_image = tmp_path / "query.png"
+    _image(query_image)
+    _add_kpi(policy, query_image)
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [4, 4, 20, 20], "best_iou": 0.0}]).to_parquet(strict)
+    pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"]).to_parquet(loose)
+
+    with pytest.raises(FileNotFoundError, match="real candidate manifest"):
+        MODULE.queries(policy, strict, loose, 1, tmp_path / "queries",
+                       tmp_path / "missing-candidates", None)
