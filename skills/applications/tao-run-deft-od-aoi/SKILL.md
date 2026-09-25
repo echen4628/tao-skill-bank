@@ -259,10 +259,11 @@ Pass the emitted filtering YAML through `tao-prepare-anomalygennext-inputs`,
 mounting the complete checkpoint root for its `run_amp` action, then pass its
 finalized generation plan through `tao-generate-od-defects` with the same
 checkpoint root mounted at the same canonical path. Commit `iteration_synthesis`
-before training. Re-run admission with the generated native COCO and image
-root; synthetic categories are folded to `defect`, and the frozen cumulative
-fraction cap is applied against admitted real defects. Boxes alone never
-substitute for the required pixel mask.
+before training. Re-run admission with the generated root via
+`--generation-root`; admission resolves the declared logical `binary_coco`
+output instead of hardcoding its filename. Synthetic categories are folded to
+`defect`, and the frozen cumulative fraction cap is applied against admitted
+real defects. Boxes alone never substitute for the required pixel mask.
 If the request has no routed FNs, or preparation reports no mask-eligible FNs,
 commit that typed skip contract as `iteration_synthesis` and continue to
 training without running AMP or fabricating generation/admission success.
