@@ -256,19 +256,21 @@ and hashes the plan, and records the full allocation calculation. A fraction of
 pool.
 
 Pass the emitted filtering YAML through `tao-prepare-anomalygennext-inputs`,
-then its finalized generation plan through `tao-generate-od-defects`. Commit
-`iteration_synthesis` before training. Re-run admission with the generated
-native COCO and image root; synthetic categories are folded to `defect`, and
-the frozen cumulative fraction cap is applied against admitted real defects.
-Boxes alone never substitute for the required pixel mask. If the request has no
-routed FNs, or preparation reports no mask-eligible FNs, commit that typed skip
-contract as `iteration_synthesis` and continue to training without running AMP
-or fabricating generation/admission success. Missing or empty AnomalyGen clean
-reference pools likewise skip only affected FN/types with
-`no_clean_reference_images`; eligible types and real/clean retrieval continue.
-Initialization rejects synthesis when the entire configured reference pool has
-no supported image under any `TEXTURE/clean_image` directory.
-If no FN remains eligible, the preparation-level reason is
+mounting the complete checkpoint root for its `run_amp` action, then pass its
+finalized generation plan through `tao-generate-od-defects` with the same
+checkpoint root mounted at the same canonical path. Commit `iteration_synthesis`
+before training. Re-run admission with the generated native COCO and image
+root; synthetic categories are folded to `defect`, and the frozen cumulative
+fraction cap is applied against admitted real defects. Boxes alone never
+substitute for the required pixel mask.
+If the request has no routed FNs, or preparation reports no mask-eligible FNs,
+commit that typed skip contract as `iteration_synthesis` and continue to
+training without running AMP or fabricating generation/admission success.
+Missing or empty AnomalyGen clean reference pools likewise skip only affected
+FN/types with `no_clean_reference_images`; eligible types and real/clean
+retrieval continue. Initialization rejects synthesis when the entire configured
+reference pool has no supported image under any `TEXTURE/clean_image`
+directory. If no FN remains eligible, the preparation-level reason is
 `no_eligible_false_negatives` while per-FN evidence retains the specific cause.
 If every producer is unavailable, the typed skip commits convergence instead of
 training on an unchanged iteration.
