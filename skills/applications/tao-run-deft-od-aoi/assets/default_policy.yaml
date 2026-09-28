@@ -18,8 +18,11 @@ gap:
 retrieval:
   model: SigLIP
   model_path: google/siglip-base-patch16-224
+  preprocessing:
+    profile: square_context
   defect_context_scale: 1.5
   clean_grids: [1, 2]
+  output_size: 224
   minimum_similarity: -1.0
   candidate_overfetch: 15
 routing:

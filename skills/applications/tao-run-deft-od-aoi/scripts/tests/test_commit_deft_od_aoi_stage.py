@@ -123,7 +123,19 @@ def _advance_to_synthesis(root: Path, *, retrieval_enabled: bool) -> Path:
     else:
         manifest = root / "query_manifest.json"
         manifest.write_text(json.dumps({"status": "COMPLETE", "iteration": 1,
-                                        "query_counts": {}, "enabled_roles": []}))
+                                        "query_counts": {}, "enabled_roles": [],
+                                        "role_status": {
+                                            role: {
+                                                "status": "NO_QUERIES",
+                                                "query_count": 0,
+                                                "candidate_count": 0,
+                                                "excluded_count": 0,
+                                                "remaining_candidate_count": 0,
+                                            }
+                                            for role in ("real", "clean")
+                                        },
+                                        "converged": False,
+                                        "synthesis_pending": True}))
         retrieval = [f"query_manifest={manifest}"]
     MODULE.commit(state, "iteration_retrieval", 1, retrieval)
     admission = root / "admission_report.json"

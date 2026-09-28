@@ -31,7 +31,7 @@ def _oriented_image(path: Path) -> None:
     Image.fromarray(np.full((20, 40, 3), 80, dtype=np.uint8)).save(path, exif=exif)
 
 
-def _policy(root: Path) -> Path:
+def _policy(root: Path, profile: str = "tight_context") -> Path:
     sources = {}
     for role in ("real", "clean"):
         images = root / role
@@ -49,8 +49,10 @@ def _policy(root: Path) -> Path:
                                       "gap": {"background_iou_upper": 0.05,
                                               "near_miss_iou_upper": 0.5},
                                       "retrieval": {"model": "SigLIP", "model_path": "siglip",
+                                                    "preprocessing": {"profile": profile},
                                                     "defect_context_scale": 1.5,
                                                     "clean_grids": [1, 2],
+                                                    "output_size": 224,
                                                     "candidate_overfetch": 15},
                                       "routing": {"real_mine_factor_min": 1,
                                                   "real_mine_factor_max": 6,
@@ -89,6 +91,61 @@ def test_candidate_cache_uses_defect_crops_and_clean_grid(tmp_path: Path) -> Non
     clean = pd.read_parquet(tmp_path / "candidates/clean_candidates.parquet")
     assert real.source_filepath.nunique() == clean.source_filepath.nunique() == 1
     assert all(Path(path).is_file() for path in list(real.filepath) + list(clean.filepath))
+    assert all(value.startswith("real-") for value in real.candidate_id)
+    assert Image.open(real.iloc[0].filepath).size == (18, 18)
+    assert {Image.open(path).size for path in clean.filepath} == {(16, 16), (32, 32)}
+
+
+def test_square_context_reproduces_historical_fixed_size_crops(tmp_path: Path) -> None:
+    report = MODULE.candidates(
+        _policy(tmp_path, "square_context"), tmp_path / "candidates"
+    )
+
+    assert report["counts"] == {"real": 1, "clean": 5}
+    real = pd.read_parquet(tmp_path / "candidates/real_candidates.parquet")
+    clean = pd.read_parquet(tmp_path / "candidates/clean_candidates.parquet")
+    assert real.candidate_id.tolist() == ["defect:1:9"]
+    assert clean.candidate_id.tolist() == [
+        "clean:1:g1:r0:c0", "clean:1:g2:r0:c0", "clean:1:g2:r0:c1",
+        "clean:1:g2:r1:c0", "clean:1:g2:r1:c1",
+    ]
+    assert all(Image.open(path).size == (224, 224)
+               for path in [*real.filepath, *clean.filepath])
+    manifest = json.loads((tmp_path / "candidates/candidate_manifest.json").read_text())
+    assert manifest["preprocessing_profile"] == "square_context"
+
+
+def test_square_context_preserves_historical_string_id_order(tmp_path: Path) -> None:
+    policy = _policy(tmp_path, "square_context")
+    value = yaml.safe_load(policy.read_text())
+    for role in ("real", "clean"):
+        images = Path(value["sources"][role]["images"])
+        for image_id in (2, 10):
+            _image(images / f"{role}-{image_id}.png", image_id)
+        coco = Path(value["sources"][role]["coco"])
+        document = json.loads(coco.read_text())
+        document["images"] = [
+            {"id": 2, "file_name": f"{role}-2.png"},
+            {"id": 10, "file_name": f"{role}-10.png"},
+        ]
+        document["annotations"] = (
+            [
+                {"id": 4, "image_id": 2, "category_id": 1, "bbox": [8, 8, 12, 12]},
+                {"id": 3, "image_id": 10, "category_id": 1, "bbox": [8, 8, 12, 12]},
+                {"id": 20, "image_id": 10, "category_id": 1, "bbox": [8, 8, 12, 12]},
+            ] if role == "real" else []
+        )
+        coco.write_text(json.dumps(document))
+
+    MODULE.candidates(policy, tmp_path / "candidates")
+
+    real = pd.read_parquet(tmp_path / "candidates/real_candidates.parquet")
+    clean = pd.read_parquet(tmp_path / "candidates/clean_candidates.parquet")
+    assert real.candidate_id.tolist() == [
+        "defect:10:20", "defect:10:3", "defect:2:4",
+    ]
+    assert clean.candidate_id.iloc[0] == "clean:10:g1:r0:c0"
+    assert clean.candidate_id.iloc[5] == "clean:2:g1:r0:c0"
 
 
 @pytest.mark.parametrize(
@@ -128,7 +185,7 @@ def test_candidate_cache_applies_exif_orientation_before_cropping(tmp_path: Path
 
     report = MODULE.candidates(policy, tmp_path / "candidates")
 
-    assert report["real"] == 1
+    assert report["counts"]["real"] == 1
     frame = pd.read_parquet(tmp_path / "candidates/real_candidates.parquet")
     with Image.open(frame.iloc[0].filepath) as crop:
         assert crop.size == (9, 9)
@@ -231,6 +288,9 @@ def test_queries_exclude_crops_from_previously_admitted_sources(tmp_path: Path) 
         {"filepath": str(candidates / "clean-novel.png"),
          "source_filepath": str(novel_clean)},
     ]).to_parquet(candidates / "clean_candidates.parquet", index=False)
+    (candidates / "candidate_manifest.json").write_text(json.dumps({
+        "status": "COMPLETE", "counts": {"real": 3, "clean": 2},
+    }))
     previous = tmp_path / "previous.json"
     previous.write_text(json.dumps({"images": [
         {"deft_kind": "real_defect", "original_source_path": str(prior_real)},
@@ -452,3 +512,34 @@ def test_queries_reject_missing_candidate_manifest(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError, match="candidate manifest"):
         MODULE.queries(policy, strict, loose, 1, tmp_path / "queries",
                        tmp_path / "missing-candidates", None)
+
+
+def test_square_context_applies_to_queries_independently_of_routing(tmp_path: Path) -> None:
+    policy = _policy(tmp_path, "square_context")
+    MODULE.candidates(policy, tmp_path / "candidates")
+    query_image = tmp_path / "query.png"
+    _image(query_image)
+    _add_kpi(policy, query_image)
+    strict = tmp_path / "strict.parquet"
+    loose = tmp_path / "loose.parquet"
+    pd.DataFrame([{"filepath": str(query_image), "gap_type": "FN",
+                   "bbox": [0, 0, 8, 4], "best_iou": 0.0}]).to_parquet(strict)
+    pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"]).to_parquet(loose)
+
+    report = MODULE.queries(
+        policy, strict, loose, 1, tmp_path / "queries", tmp_path / "candidates", None
+    )
+
+    frame = pd.read_parquet(tmp_path / "queries/real_queries.parquet")
+    assert report["preprocessing_profile"] == "square_context"
+    assert Image.open(frame.iloc[0].filepath).size == (224, 224)
+
+
+def test_unknown_preprocessing_profile_is_rejected(tmp_path: Path) -> None:
+    policy = _policy(tmp_path, "unknown")
+    try:
+        MODULE.candidates(policy, tmp_path / "candidates")
+    except ValueError as error:
+        assert "tight_context or square_context" in str(error)
+    else:
+        raise AssertionError("unknown preprocessing profile was accepted")
