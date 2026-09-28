@@ -409,6 +409,8 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
     strategy = ((policy.get("retrieval") or {}).get("selection") or {}).get(
         "strategy", "round_robin_similarity"
     )
+    routing = policy["routing"]
+    round_robin_default = int(routing["round_robin_real_factor_default"])
     metadata = _metadata_index(policy) if strategy == "round_robin_similarity" else {}
     strict, loose = pd.read_parquet(strict_path), pd.read_parquet(loose_path)
     required = {"filepath", "gap_type", "bbox", "best_iou"}
@@ -472,7 +474,7 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
                 if reason == "fn":
                     factor_value = event.get("real_factor")
                     if factor_value is None or pd.isna(factor_value):
-                        factor_value = real_factor or policy["routing"]["real_mine_factor_min"]
+                        factor_value = real_factor or round_robin_default
                     row["real_factor"] = int(factor_value)
         counts[role], frames[role] = len(rows), pd.DataFrame(rows)
         if not rows:
@@ -557,7 +559,6 @@ def queries(policy_path: Path, strict_path: Path, loose_path: Path, iteration: i
         (output / f"embed_{role}_queries.yaml").write_text(
             yaml.safe_dump(_embedding_spec(policy, parquet, embedded), sort_keys=False)
         )
-        routing = policy["routing"]
         if role == "real":
             factor = real_factor or int(routing["real_mine_factor_min"])
             if not int(routing["real_mine_factor_min"]) <= factor <= int(routing["real_mine_factor_max"]):
