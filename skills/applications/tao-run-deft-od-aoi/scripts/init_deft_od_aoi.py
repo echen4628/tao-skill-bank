@@ -19,6 +19,7 @@ DEFAULTS = Path(__file__).resolve().parents[1] / "assets" / "default_policy.yaml
 # Normalized handoff roles: KPI/test are held out, ``real`` is the
 # defective-real mining pool, and ``clean`` is the verified-clean mining pool.
 ROLES = ("kpi", "test", "real", "clean")
+IMAGE_SUFFIXES = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff"}
 
 
 def _json(path: Path, value: Any) -> None:
@@ -57,6 +58,15 @@ def _validate_bbox(value: Any, image: dict[str, Any], role: str) -> None:
         raise ValueError(f"{role} normalized COCO bbox dimensions must be positive")
     if x < 0 or y < 0 or x + width > image_width or y + height > image_height:
         raise ValueError(f"{role} normalized COCO bbox exceeds image bounds")
+
+
+def _has_synthesis_clean_reference(pool: Path) -> bool:
+    return any(
+        image.is_file() and image.suffix.lower() in IMAGE_SUFFIXES
+        for texture in pool.iterdir() if texture.is_dir()
+        for clean_dir in (texture / "clean_image",) if clean_dir.is_dir()
+        for image in clean_dir.iterdir()
+    )
 
 
 def _role(name: str, value: dict[str, Any]) -> dict[str, Any]:
@@ -131,8 +141,11 @@ def initialize(config_path: Path, output: Path) -> dict[str, Any]:
         raise ValueError("DEFT OD AOI has one foreground class named defect")
     synthesis = policy.get("synthesis", {})
     if synthesis.get("enabled"):
-        if not Path(str(synthesis.get("pool_dataset_root") or "")).is_dir():
+        pool = Path(str(synthesis.get("pool_dataset_root") or "")).expanduser().resolve()
+        if not pool.is_dir():
             raise ValueError("enabled synthesis needs pool_dataset_root")
+        if not _has_synthesis_clean_reference(pool):
+            raise ValueError("enabled synthesis needs at least one clean reference image")
         if not Path(str(synthesis.get("defect_spec") or "")).is_file():
             raise ValueError("enabled synthesis needs defect_spec")
         if not synthesis.get("routes"):
