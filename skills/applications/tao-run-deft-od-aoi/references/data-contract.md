@@ -41,6 +41,9 @@ deduplicates selected crops to source images, rejects previously admitted
 sources, and publishes a new binary COCO. Pass `--previous-coco` from
 iteration 2 onward. Clean negatives are capped by
 `routing.clean_cumulative_cap_per_real`. When synthesis is enabled, pass both
-the generated binary COCO and its image root. Synthetic admission is capped by
-`synthesis.cumulative_fraction_of_real_defects`. Existing records remain
-unchanged.
+the generated binary COCO and its image root. Synthetic admission is capped so
+that synthetic defects occupy at most
+`synthesis.cumulative_fraction_of_total_defects` of the combined real and
+synthetic defect pool. Existing records remain unchanged. The legacy
+`cumulative_fraction_of_real_defects` key remains readable with its original
+synthetic-to-real meaning.
