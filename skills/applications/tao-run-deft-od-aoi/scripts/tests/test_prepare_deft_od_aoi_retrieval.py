@@ -530,8 +530,10 @@ def test_square_context_applies_to_queries_independently_of_routing(tmp_path: Pa
                    "bbox": [0, 0, 8, 4], "best_iou": 0.0}]).to_parquet(strict)
     pd.DataFrame(columns=["filepath", "gap_type", "bbox", "best_iou"]).to_parquet(loose)
 
+    candidates = tmp_path / "candidates"
+
     report = MODULE.queries(
-        policy, strict, loose, 1, tmp_path / "queries", tmp_path / "candidates", None
+        policy, strict, loose, 1, tmp_path / "queries", candidates, None
     )
 
     frame = pd.read_parquet(tmp_path / "queries/real_queries.parquet")

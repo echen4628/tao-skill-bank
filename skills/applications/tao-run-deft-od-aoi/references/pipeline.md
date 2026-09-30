@@ -58,14 +58,21 @@ Queries routed to an initially empty role are typed `EXHAUSTED` with all three
 candidate audit counts at zero, while another `READY` role continues. When no
 retrieval role is ready and synthesis cannot add data, commit convergence
 without admission, training, or another unchanged iteration.
+A round-robin role
+whose remaining candidates all fall below `minimum_similarity` records
+`NO_MATCHES` and an empty typed selection artifact; this is a valid retrieval
+outcome, not pool exhaustion.
 
 ## 4. Admit real and clean data
 
 Run `admit_deft_od_aoi_coco.py`. For iteration 2 and later, pass the prior
 iteration's cumulative `train.json`. Gate on the new binary COCO,
 `admitted_sources.parquet`, `admission_report.json`, and round-robin's copied
-`admission_index.npy`. Commit
-`iteration_admission`.
+`admission_index.npy`. Commit `iteration_admission`. Admission records the
+same `SELECTED`/`NO_MATCHES`
+per-role outcome for either selection strategy. If no new image is admitted,
+the commit routes to synthesis when enabled; otherwise it converges with
+`retrieval_no_matches` instead of training an unchanged dataset.
 
 ## 5. Optional synthesis
 

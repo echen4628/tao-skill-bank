@@ -139,10 +139,63 @@ def test_round_robin_admission_consumes_materialized_selection(tmp_path: Path) -
     assert report["selection_admission_counters"]["admitted"] == 2
 
 
-def test_admission_rejects_empty_enabled_result_after_similarity_gate(tmp_path: Path) -> None:
+def test_max_similarity_records_no_matches_without_empty_pool_error(tmp_path: Path) -> None:
     policy, candidates, retrieval = _fixture(tmp_path, similarity=0.0)
-    with pytest.raises(ValueError, match="mining admitted no source images"):
-        MODULE.admit(policy, candidates, retrieval, tmp_path / "out", None, "copy")
+    report = MODULE.admit(policy, candidates, retrieval, tmp_path / "out", None, "copy")
+
+    assert report["role_status"] == {
+        "real": {"status": "NO_MATCHES", "selected_count": 0},
+        "clean": {"status": "NO_MATCHES", "selected_count": 0},
+    }
+    assert report["new_training_images"] == 0
+    assert report["total_images"] == 0
+
+
+def test_max_similarity_no_matches_does_not_count_retained_data_as_new(tmp_path: Path) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path, similarity=0.0)
+    previous = tmp_path / "previous.json"
+    previous.write_text(json.dumps({
+        "images": [{
+            "id": 1, "file_name": "real.png", "source_path": str(tmp_path / "real.png"),
+            "width": 16, "height": 16, "deft_kind": "real_defect",
+        }],
+        "annotations": [{
+            "id": 1, "image_id": 1, "category_id": 1, "bbox": [1, 1, 4, 4],
+        }],
+        "categories": [{"id": 1, "name": "defect"}],
+    }))
+
+    report = MODULE.admit(
+        policy, candidates, retrieval, tmp_path / "out", previous, "copy"
+    )
+
+    assert report["retained_previous_images"] == 1
+    assert report["total_images"] == 1
+    assert report["new_training_images"] == 0
+
+
+def test_no_real_data_warns_before_synthesis_generation(tmp_path: Path) -> None:
+    policy, candidates, retrieval = _fixture(tmp_path, similarity=0.0)
+    value = yaml.safe_load(policy.read_text())
+    value["synthesis"]["enabled"] = True
+    value["synthesis"]["cumulative_fraction_of_real_defects"] = 0.25
+    policy.write_text(yaml.safe_dump(value))
+
+    report = MODULE.admit(
+        policy, candidates, retrieval, tmp_path / "out", None, "copy"
+    )
+
+    assert report["warnings"] == [{
+        "code": "SYNTHETIC_ADMISSION_CAP_ZERO",
+        "message": (
+            "synthetic admission currently has zero room; generation may complete "
+            "without admitting any synthetic images"
+        ),
+        "cumulative_real_images": 0,
+        "configured_fraction": 0.25,
+        "cumulative_synthetic_limit": 0,
+        "synthetic_images_before_admission": 0,
+    }]
 
 
 def test_admission_reports_parent_shortfall_without_failing(tmp_path: Path) -> None:
@@ -275,7 +328,21 @@ def test_synthetic_quality_filter_and_proportional_allocation(tmp_path: Path) ->
     assert admission["quality_filter"]["rejected_annotations_small"] == 1
     assert admission["requested_new"] == 4
     assert admission["admitted_new"] == 2
+    assert admission["excluded_by_cap"] == 2
+    assert admission["cumulative_real_images"] == 2
+    assert admission["cumulative_synthetic_limit"] == 2
     assert admission["admitted_by_stratum"] == {"line-a": 1, "line-b": 1}
+    assert report["warnings"] == [{
+        "code": "SYNTHETIC_ADMISSION_CAPPED",
+        "message": (
+            "2 eligible generated synthetic images were excluded by "
+            "synthesis.cumulative_fraction_of_real_defects"
+        ),
+        "cumulative_real_images": 2,
+        "configured_fraction": 1.0,
+        "cumulative_synthetic_limit": 2,
+        "synthetic_images_before_admission": 0,
+    }]
 
 
 def test_synthetic_cap_selection_is_independent_of_coco_order(tmp_path: Path) -> None:

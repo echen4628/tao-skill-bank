@@ -61,7 +61,19 @@ that synthetic defects occupy at most
 `synthesis.cumulative_fraction_of_total_defects` of the combined real and
 synthetic defect pool. Existing records remain unchanged. The legacy
 `cumulative_fraction_of_real_defects` key remains readable with its original
-synthetic-to-real meaning. Admission also emits `admission_preview.json`. When
-overfetched crops
+synthetic-to-real meaning. The cap is applied against the total cumulative
+admitted real count, not only real images added in the current iteration.
+Admission also emits `admission_preview.json`. When overfetched crops
 do not contain enough novel parent images for a branch target, it admits the
 available parents and records the shortfall instead of failing the iteration.
+
+Generation currently completes before this admission cap is applied. The
+first admission report emits `SYNTHETIC_ADMISSION_CAP_ZERO` before generation
+when synthesis is enabled but the current fractional allowance has no room.
+After generation, it emits `SYNTHETIC_ADMISSION_CAPPED` when otherwise-eligible
+generated images are excluded. The warnings include the configured fraction,
+real count, and synthetic ceiling. If a run is expected to admit fewer real
+images but needs a larger synthetic share, increase the fraction before
+freezing its policy and review the resulting dataset balance. Because the cap
+is multiplicative, increasing the fraction cannot admit synthetic images when
+the cumulative real count is zero.

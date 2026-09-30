@@ -291,7 +291,14 @@ before training. Re-run admission with the generated root via
 `--generation-root`; admission resolves the declared logical `binary_coco`
 output instead of hardcoding its filename. Synthetic categories are folded to
 `defect`, and the frozen cumulative fraction cap is applied against admitted
-real defects. Boxes alone never substitute for the required pixel mask.
+real defects. Generation precedes this cap check, so inspect
+`admission_report.json` for a `SYNTHETIC_ADMISSION_CAP_ZERO` warning before
+generation and a `SYNTHETIC_ADMISSION_CAPPED` warning after eligible generated
+images are excluded. For runs expected to have fewer nonzero real admissions,
+raise `synthesis.cumulative_fraction_of_real_defects` before freezing the
+policy if a larger synthetic share is intended. A zero cumulative real count
+still permits zero synthetic admissions. Boxes alone never substitute for the
+required pixel mask.
 If the request has no routed FNs, or preparation reports no mask-eligible FNs,
 commit that typed skip contract as `iteration_synthesis` and continue to
 training without running AMP or fabricating generation/admission success.
