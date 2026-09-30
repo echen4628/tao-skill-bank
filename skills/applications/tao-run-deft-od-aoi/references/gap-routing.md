@@ -39,6 +39,25 @@ For either profile:
 - each verified-clean image produces the whole image and a 2×2 grid;
 - both roles use the same frozen SigLIP encoder.
 
+`retrieval.selection.strategy` independently selects how those embeddings are
+ranked:
+
+- `round_robin_similarity` (default) ranks candidates per query and advances
+  one rank depth at a time in stable query order. Strict-FN and near-miss
+  quotas are isolated by `(benchmark, texture, defect_type)` pocket, while
+  background-clean queries share the same deterministic round progression;
+- `max_similarity` retains global selection by each candidate's maximum cosine
+  similarity to any query.
+
+Round-robin selection bypasses the global mining action and reads the complete
+candidate and query embedding tables during admission. Prior sources,
+duplicate parents, and candidates below `minimum_similarity` are excluded.
+Each strict query uses its gap-row `real_factor`, then the explicit
+`--real-factor`, then `routing.real_mine_factor_min`; all strict queries in one
+pocket must agree. KPI images must provide `benchmark`, `texture`, and
+`defect_type`, either directly or via `dataset_id`, `texture_id`, and
+`defect_class` aliases.
+
 For each iteration, crop strict FNs and near-miss FPs as real queries, and
 background-like loose FPs as clean queries. Embed queries with the identical
 encoder. Invoke `tao-mine-od-images` using the emitted role-specific specs.
@@ -46,8 +65,9 @@ Context crops smaller than 8 pixels on either edge are expanded around the
 requested defect center within image bounds. Only source images narrower than
 8 pixels require zero padding; ordinary crop dimensions remain unchanged.
 
-Retrieval is global within the real or clean role. Provenance metadata does not
-partition the index. Empty query roles emit no action. Admission recomputes
+For `max_similarity`, retrieval is global within the real or clean role.
+Provenance metadata does not partition the index. Empty query roles emit no
+action. Admission recomputes
 maximum cosine similarity from the frozen embeddings, applies the frozen
 minimum, deduplicates parent images, and enforces cumulative caps. The mining
 request overfetches crop candidates by the frozen factor, while admission

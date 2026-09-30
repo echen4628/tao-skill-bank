@@ -30,9 +30,13 @@ def _source(root: Path, name: str, *, boxed: bool, category: int = 7,
     annotations = ([{"id": 9, "image_id": 4, "category_id": category,
                      "bbox": [1, 2, 3, 4], "label": "scratch"}] if boxed else [])
     coco = root / name / "source.json"
+    image_row = {"id": 4, "file_name": image.name, "width": 12, "height": 10,
+                 "customer_field": name}
+    if name == "kpi":
+        image_row.update({"dataset_id": "line-a", "texture_id": "board",
+                          "defect_class": "scratch"})
     coco.write_text(json.dumps({
-        "images": [{"id": 4, "file_name": image.name, "width": 12, "height": 10,
-                    "customer_field": name}],
+        "images": [image_row],
         "annotations": annotations,
         "categories": [{"id": category, "name": "customer-defect"}],
     }))
