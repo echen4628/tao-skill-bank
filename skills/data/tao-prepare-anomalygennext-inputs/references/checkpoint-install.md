@@ -59,6 +59,26 @@ mode. Treat it as a one-time full shared installation and report that storage
 scope before launch. A consumer may still select `--no-guardrail` at runtime;
 that flag changes generation behavior, not what the installer downloads.
 
+## Narrow DCP conversion fallback
+
+The full installer remains the default when the shared root or any companion
+assets are missing. If the companion root is already complete and only the
+official Cosmos3-Nano base checkpoint is available in Hugging Face format,
+convert that checkpoint with the converter baked into the same pinned image:
+
+```bash
+python -m cosmos_framework.scripts.convert_model_to_dcp \
+  -o /models/Cosmos3-Nano-dcp \
+  --checkpoint-path Cosmos3-Nano
+```
+
+Mount `/models` to persistent writable storage. The registered
+`Cosmos3-Nano` name resolves the official checkpoint; an already-staged
+Hugging Face checkpoint may instead be supplied as an absolute,
+container-visible path. This fallback creates only the native DCP tree needed
+by fine-tuning. It is not a profile mode and does not reconstruct or validate
+the VAE, tokenizer cache, DINOv2, C-RADIO, or other companion assets.
+
 ## Completion boundary
 
 Accept the installation only when the upstream script exits successfully and

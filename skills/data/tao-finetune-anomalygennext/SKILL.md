@@ -47,8 +47,24 @@ If the complete root is not already staged, use the AnomalyGenNext 1.1
 container's canonical full installer documented in
 [`tao-prepare-anomalygennext-inputs`](../tao-prepare-anomalygennext-inputs/references/checkpoint-install.md).
 It creates the required DCP base checkpoint, VAE, tokenizer cache, DINOv2, and
-C-RADIO assets together. Do not assemble a fine-tuning root with a separate
-converter and ad hoc downloads.
+C-RADIO assets together. Do not use an isolated conversion as a substitute for
+missing companion assets.
+
+If the companion root is already complete but the official Cosmos3-Nano base
+checkpoint is available only in Hugging Face format, convert just that
+checkpoint inside the same pinned image and write it to persistent storage:
+
+```bash
+python -m cosmos_framework.scripts.convert_model_to_dcp \
+  -o /models/Cosmos3-Nano-dcp \
+  --checkpoint-path Cosmos3-Nano
+```
+
+The registered `Cosmos3-Nano` name resolves the official checkpoint. To
+convert an already-staged Hugging Face checkpoint instead, replace it with
+that directory's absolute container path. Use the converter output as
+`--base-checkpoint`; this narrow fallback does not install or replace the
+complete companion root.
 
 Dataset and validation images and masks must use `.jpg`, `.jpeg`, or `.png`,
 matching the extensions supported by the AnomalyGenNext 1.1 runtime loader.

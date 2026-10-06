@@ -23,6 +23,7 @@
       "Select tao-prepare-anomalygennext-inputs",
       "Use the installer from the pinned 1.1 image rather than a host checkout or independent Hub downloads",
       "Describe the full-install scope and absence of Nano-only or no-guardrail download switches",
+      "Reserve the baked Nano converter for the narrow case where the companion root is already complete but the base checkpoint is only in Hugging Face format",
       "Keep HF_TOKEN in the environment and acquisition behind launch review",
       "Distinguish checkpoint installation from guardrail runtime network independence"
     ]

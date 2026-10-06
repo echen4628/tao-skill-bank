@@ -19,8 +19,25 @@ When the complete checkpoint root is unavailable, create it with the canonical
 full installer documented in
 [`tao-prepare-anomalygennext-inputs`](../../tao-prepare-anomalygennext-inputs/references/checkpoint-install.md).
 The installer runs inside this pinned image and produces the DCP checkpoint and
-the fixed companion tree together. Do not substitute a host checkout or a
-separate conversion/download sequence.
+the fixed companion tree together. Do not substitute a host checkout or an ad
+hoc download sequence.
+
+When the companion root is already complete and only the Cosmos3-Nano base
+checkpoint is available in its Hugging Face layout, the converter baked into
+the pinned image remains a supported narrow fallback. Mount `/models` to
+persistent writable storage and run:
+
+```bash
+python -m cosmos_framework.scripts.convert_model_to_dcp \
+  -o /models/Cosmos3-Nano-dcp \
+  --checkpoint-path Cosmos3-Nano
+```
+
+The converter runs on CPU and resolves the registered official model.
+`--checkpoint-path` may instead name an absolute, container-visible Hugging
+Face checkpoint directory. Use the output as the recipe's `base_checkpoint`;
+the conversion does not provision the VAE, tokenizer cache, DINOv2, C-RADIO,
+or other companion assets.
 
 The upstream trainer resolves the required Qwen tokenizer model assets and
 DINOv2 from the image repository's own checkpoint tree. Expose the complete
