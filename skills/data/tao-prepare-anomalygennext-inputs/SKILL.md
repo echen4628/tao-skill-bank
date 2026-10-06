@@ -1,9 +1,9 @@
 ---
 name: tao-prepare-anomalygennext-inputs
 description: >-
-  Prepare normalized object-detection false negatives, source masks, and clean-image
-  embedding inputs for AnomalyGenNext. Use when turning box-level FN gaps into a
-  frozen, pair-preserving preparation plan. Do not use for training or generation.
+  Prepare the shared AnomalyGenNext checkpoint installation or normalized
+  object-detection false negatives, source masks, and clean-image embedding inputs.
+  Use before AMP, fine-tuning, or generation. Do not execute training or generation.
 license: Apache-2.0
 compatibility: Requires the AnomalyGenNext 1.1 image, pandas, pyarrow, NumPy, Pillow, and PyYAML.
 metadata:
@@ -14,6 +14,36 @@ tags: [tao, data, anomalygen-next, object-detection, input-preparation]
 ---
 
 # Prepare AnomalyGenNext Inputs
+
+## Install shared checkpoints
+
+When a complete shared checkpoint root is not already available, use the
+`download_checkpoints.sh` shipped inside the pinned AnomalyGenNext 1.1 image.
+It is the upstream, version-matched full installer and is the canonical source
+for the checkpoint directory layout:
+
+```bash
+export CKPT_DIR=/workspace/paidf-anomalygen/checkpoints
+bash /workspace/paidf-anomalygen/scripts/download_checkpoints.sh
+```
+
+Run that command through the selected platform after the common launch review,
+with a new persistent destination mounted writable at `CKPT_DIR`. Mount the
+completed root read-only at the same path for AMP, fine-tuning, and generation.
+Use the script from the pinned image, not a host checkout: the image and a
+nearby source checkout can carry different installer revisions.
+
+This is a full install, not a profile-aware command. It downloads both Nano and
+Edge DCP checkpoints, the direct Nano model used by AMP, KPI backbones, the VAE,
+SAM, processor/tokenizer assets, and guardrails. It has no Nano-only or
+`--no-guardrail` switch. Review the full storage and gated-access requirements
+before launch; pass `HF_TOKEN` only through the environment after accepting the
+required Hugging Face licenses.
+
+Read `references/checkpoint-install.md` for the complete layout, platform
+requirements, verification boundary, and guardrail runtime caveats. Do not
+maintain a parallel downloader by reconstructing this asset set with individual
+Hub calls.
 
 The first action freezes eligible false-negative identities, isolates each FN
 mask to its bounding box, selects one deterministic same-type mask, and emits

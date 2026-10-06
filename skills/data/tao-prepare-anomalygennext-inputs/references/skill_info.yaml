@@ -8,6 +8,9 @@ optional_credentials:
 - name: NGC_KEY
   source: env_var
   only_when: the selected platform requires authenticated access to nvcr.io
+- name: HF_TOKEN
+  source: env_var
+  only_when: running the container-provided download_checkpoints.sh full installer
 actions:
   prepare_plan:
     command: scripts/prepare_anomalygennext_inputs.py

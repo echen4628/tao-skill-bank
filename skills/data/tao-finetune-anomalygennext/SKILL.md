@@ -43,21 +43,12 @@ JSONL must contain `image_filename`, `mask_filename`, and `anomaly_type`; each t
 `TEXTURE+DEFECT` needs at least three rows. A separately stored defect spec is
 accepted with `--defect-spec`.
 
-If the official Cosmos3-Nano checkpoint is not already staged in DCP format,
-run the converter shipped in the pinned AnomalyGenNext image and write its
-output to a mounted, persistent directory:
-
-```bash
-python -m cosmos_framework.scripts.convert_model_to_dcp \
-  -o /models/Cosmos3-Nano-dcp \
-  --checkpoint-path Cosmos3-Nano
-```
-
-The registered `Cosmos3-Nano` name resolves the official checkpoint. To
-convert an already-staged Hugging Face checkpoint instead, replace it with
-that directory's absolute container path. Use the converter output as
-`--base-checkpoint`; preparation verifies `checkpoint.json`,
-`model/.metadata`, and the generated `model/*.distcp` shards before GPU work.
+If the complete root is not already staged, use the AnomalyGenNext 1.1
+container's canonical full installer documented in
+[`tao-prepare-anomalygennext-inputs`](../tao-prepare-anomalygennext-inputs/references/checkpoint-install.md).
+It creates the required DCP base checkpoint, VAE, tokenizer cache, DINOv2, and
+C-RADIO assets together. Do not assemble a fine-tuning root with a separate
+converter and ad hoc downloads.
 
 Dataset and validation images and masks must use `.jpg`, `.jpeg`, or `.png`,
 matching the extensions supported by the AnomalyGenNext 1.1 runtime loader.

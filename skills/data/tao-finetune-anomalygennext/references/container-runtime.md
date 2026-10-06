@@ -15,21 +15,12 @@ checkpoint, VAE, complete checkpoint root, and durable results directory.
 The Cosmos3-Nano checkpoint must retain its DCP layout: `checkpoint.json`,
 `model/.metadata`, and at least one `model/*.distcp` shard.
 
-When the official checkpoint is available only in its Hugging Face layout,
-convert it inside this pinned image, with `/models` mounted to persistent
-writable storage:
-
-```bash
-python -m cosmos_framework.scripts.convert_model_to_dcp \
-  -o /models/Cosmos3-Nano-dcp \
-  --checkpoint-path Cosmos3-Nano
-```
-
-The converter runs on CPU, resolves the registered official model, and writes
-the DCP checkpoint under the output directory. `--checkpoint-path` may instead
-name an absolute, container-visible Hugging Face checkpoint directory. Write
-the converted checkpoint to persistent mounted storage; recipe preparation and
-training both require that directory as the `base_checkpoint` input.
+When the complete checkpoint root is unavailable, create it with the canonical
+full installer documented in
+[`tao-prepare-anomalygennext-inputs`](../../tao-prepare-anomalygennext-inputs/references/checkpoint-install.md).
+The installer runs inside this pinned image and produces the DCP checkpoint and
+the fixed companion tree together. Do not substitute a host checkout or a
+separate conversion/download sequence.
 
 The upstream trainer resolves the required Qwen tokenizer model assets and
 DINOv2 from the image repository's own checkpoint tree. Expose the complete

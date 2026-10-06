@@ -36,6 +36,12 @@ must exist, every anomaly type must occur in the recipe, and the requested row
 count must match the testcase. When a prepared integrity manifest exists,
 every recorded hash is verified before generation.
 
+If the complete root is unavailable, use the AnomalyGenNext 1.1 container's
+canonical full installer documented in
+[`tao-prepare-anomalygennext-inputs`](../tao-prepare-anomalygennext-inputs/references/checkpoint-install.md).
+The installer always includes guardrail assets even when this generation run
+will use `--no-guardrail`.
+
 ## Run
 
 Invoke `tao-launch-workflow`, review the exact image, mounts, GPU shape, runtime,
