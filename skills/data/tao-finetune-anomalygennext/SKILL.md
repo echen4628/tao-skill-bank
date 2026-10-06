@@ -63,8 +63,9 @@ python -m cosmos_framework.scripts.convert_model_to_dcp \
 The registered `Cosmos3-Nano` name resolves the official checkpoint. To
 convert an already-staged Hugging Face checkpoint instead, replace it with
 that directory's absolute container path. Use the converter output as
-`--base-checkpoint`; this narrow fallback does not install or replace the
-complete companion root.
+`--base-checkpoint`; preparation verifies `checkpoint.json`,
+`model/.metadata`, and the generated `model/*.distcp` shards before GPU work.
+This narrow fallback does not install or replace the complete companion root.
 
 Dataset and validation images and masks must use `.jpg`, `.jpeg`, or `.png`,
 matching the extensions supported by the AnomalyGenNext 1.1 runtime loader.

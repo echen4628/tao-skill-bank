@@ -22,9 +22,9 @@ The installer runs inside this pinned image and produces the DCP checkpoint and
 the fixed companion tree together. Do not substitute a host checkout or an ad
 hoc download sequence.
 
-When the companion root is already complete and only the Cosmos3-Nano base
-checkpoint is available in its Hugging Face layout, the converter baked into
-the pinned image remains a supported narrow fallback. Mount `/models` to
+When the companion root is already complete but the Cosmos3-Nano base
+checkpoint is available only in Hugging Face format rather than the required
+DCP format, run the converter baked into the pinned image. Mount `/models` to
 persistent writable storage and run:
 
 ```bash
@@ -33,11 +33,11 @@ python -m cosmos_framework.scripts.convert_model_to_dcp \
   --checkpoint-path Cosmos3-Nano
 ```
 
-The converter runs on CPU and resolves the registered official model.
-`--checkpoint-path` may instead name an absolute, container-visible Hugging
-Face checkpoint directory. Use the output as the recipe's `base_checkpoint`;
-the conversion does not provision the VAE, tokenizer cache, DINOv2, C-RADIO,
-or other companion assets.
+The converter runs on CPU, resolves the registered official model, and writes
+the DCP checkpoint under the output directory. `--checkpoint-path` may instead
+name an absolute, container-visible Hugging Face checkpoint directory. Write
+the converted checkpoint to persistent mounted storage; recipe preparation and
+training both require that directory as the `base_checkpoint` input.
 
 The upstream trainer resolves the required Qwen tokenizer model assets and
 DINOv2 from the image repository's own checkpoint tree. Expose the complete
