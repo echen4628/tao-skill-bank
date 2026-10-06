@@ -76,6 +76,34 @@ checkpoints/
   hf/
 ```
 
+## Known Cosmos3-Edge checksum issue
+
+In a clean CPU run with the public 1.1 image, the Edge Hugging Face source
+download and `convert_model_to_dcp` command both completed. The installer then
+reported checksum failures for the two generated files:
+
+```text
+Cosmos3-Edge/model/__0_0.distcp
+Cosmos3-Edge/model/__0_1.distcp
+```
+
+All 11 Hub-sourced weight checksums and all six converted Cosmos3-Nano shards
+passed. The expected Edge hashes packaged in the image are:
+
+```text
+b2f130a51b619ac8da88343454b0510e0734eb2242132276224c3140123f524e  Cosmos3-Edge/model/__0_0.distcp
+695b95240a03c0fd4f6236d2c3e41fae268dc95f0b9e90ec1b1339c924d9ed23  Cosmos3-Edge/model/__0_1.distcp
+```
+
+Those values also match an earlier preserved Edge DCP conversion, so the
+failure is conversion-output drift rather than a failed Edge source download.
+Running the converter separately can retain the newly generated DCP instead of
+stopping at the installer's final manifest check, but conversion completion
+alone does not establish that the new bytes are load-compatible. Validate the
+retained DCP with an Edge model-load or generation smoke before using it. A
+Nano-only workflow can independently verify and use the unaffected Nano and
+companion assets.
+
 ## Guardrail limitation
 
 Installing the guardrail repositories does not make guardrail-enabled

@@ -32,8 +32,13 @@ used by AMP, KPI backbones, the VAE, SAM, processor/tokenizer assets, and
 guardrails. Some source repositories are gated and require `HF_TOKEN` after
 their Hugging Face licenses have been accepted.
 
+AnomalyGenNext 1.1 has a known Edge integrity issue: the Edge source download
+and DCP conversion can complete, but the two generated Edge shards can differ
+from the converted hashes packaged in the image. The Nano converted shards and
+Hub-downloaded files are unaffected in the reproduced failure.
+
 Read `references/checkpoint-install.md` for the installed layout, the Nano DCP
-converter, and guardrail runtime caveats.
+converter, the Edge checksum issue, and guardrail runtime caveats.
 
 The first action freezes eligible false-negative identities, isolates each FN
 mask to its bounding box, selects one deterministic same-type mask, and emits
