@@ -100,9 +100,18 @@ failure is conversion-output drift rather than a failed Edge source download.
 Running the converter separately can retain the newly generated DCP instead of
 stopping at the installer's final manifest check, but conversion completion
 alone does not establish that the new bytes are load-compatible. Validate the
-retained DCP with an Edge model-load or generation smoke before using it. A
-Nano-only workflow can independently verify and use the unaffected Nano and
-companion assets.
+retained DCP with an Edge model-load or generation smoke before using it.
+
+The current Skill Bank AMP, fine-tuning, and generation contracts use
+Cosmos3-Nano. For those workflows, an installer failure is non-blocking when
+the only reported mismatches are the two Edge files above and all of the
+consumer's Nano and companion inputs pass their own preflight. These consumers
+do not load the Edge DCP tree. Missing or mismatched Nano shards, Hub-sourced
+weights, or required companion assets remain failures.
+
+The upstream `preflight_env_ckpt.sh` checks both model sizes and therefore
+continues to report this Edge-only mismatch. Use the selected Nano consumer's
+preflight to validate the subset it actually loads.
 
 ## Guardrail limitation
 
