@@ -17,32 +17,23 @@ tags: [tao, data, anomalygen-next, object-detection, input-preparation]
 
 ## Install shared checkpoints
 
-When a complete shared checkpoint root is not already available, use the
-`download_checkpoints.sh` shipped inside the pinned AnomalyGenNext 1.1 image.
-It is the upstream, version-matched full installer and is the canonical source
-for the checkpoint directory layout:
+The pinned AnomalyGenNext 1.1 image includes this checkpoint installer:
 
 ```bash
 export CKPT_DIR=/workspace/paidf-anomalygen/checkpoints
 bash /workspace/paidf-anomalygen/scripts/download_checkpoints.sh
 ```
 
-Run that command through the selected platform after the common launch review,
-with a new persistent destination mounted writable at `CKPT_DIR`. Mount the
-completed root read-only at the same path for AMP, fine-tuning, and generation.
-Use the script from the pinned image, not a host checkout: the image and a
-nearby source checkout can carry different installer revisions.
+Set `CKPT_DIR` to a writable persistent destination. AMP, fine-tuning, and
+generation mount the completed root at that same container path.
 
-The full installation downloads both Nano and Edge DCP checkpoints, the direct
-Nano model used by AMP, KPI backbones, the VAE, SAM, processor/tokenizer assets,
-and guardrails. Review the full storage and gated-access requirements before
-launch; pass `HF_TOKEN` only through the environment after accepting the
-required Hugging Face licenses.
+The script installs both Nano and Edge DCP checkpoints, the direct Nano model
+used by AMP, KPI backbones, the VAE, SAM, processor/tokenizer assets, and
+guardrails. Some source repositories are gated and require `HF_TOKEN` after
+their Hugging Face licenses have been accepted.
 
-Read `references/checkpoint-install.md` for the complete layout, platform
-requirements, verification boundary, and guardrail runtime caveats. Do not
-maintain a parallel downloader by reconstructing this asset set with individual
-Hub calls.
+Read `references/checkpoint-install.md` for the installed layout, the Nano DCP
+converter, and guardrail runtime caveats.
 
 The first action freezes eligible false-negative identities, isolates each FN
 mask to its bounding box, selects one deterministic same-type mask, and emits

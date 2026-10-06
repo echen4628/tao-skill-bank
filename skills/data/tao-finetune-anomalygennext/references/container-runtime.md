@@ -15,12 +15,9 @@ checkpoint, VAE, complete checkpoint root, and durable results directory.
 The Cosmos3-Nano checkpoint must retain its DCP layout: `checkpoint.json`,
 `model/.metadata`, and at least one `model/*.distcp` shard.
 
-When the complete checkpoint root is unavailable, create it with the canonical
-full installer documented in
+The pinned image includes the full installer documented in
 [`tao-prepare-anomalygennext-inputs`](../../tao-prepare-anomalygennext-inputs/references/checkpoint-install.md).
-The installer runs inside this pinned image and produces the DCP checkpoint and
-the fixed companion tree together. Do not substitute a host checkout or an ad
-hoc download sequence.
+It produces the DCP checkpoints and companion tree together.
 
 When the companion root is already complete but the Cosmos3-Nano base
 checkpoint is available only in Hugging Face format rather than the required

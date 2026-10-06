@@ -35,12 +35,10 @@ location. It always validates `Qwen/Qwen3-VL-8B-Instruct` and
 `nvidia/Cosmos3-Edge` in the Hugging Face cache under `hf/`, plus a
 Transformers-compatible `facebook/dinov2-large`.
 
-Create a missing root with the pinned image's canonical full installer as
-documented in
+The pinned image includes the full installer documented in
 [`tao-prepare-anomalygennext-inputs`](../../tao-prepare-anomalygennext-inputs/references/checkpoint-install.md).
-Do not reconstruct the root with independent Hub downloads; the upstream
-script owns the DCP conversion, direct model tree, cache references, and KPI
-assets.
+Its output contains the DCP checkpoints, direct Nano model tree, cache
+references, and KPI assets.
 
 The wrapper preserves the native default invocation when guardrails are on and
 passes `--no-guardrail` only when they are explicitly disabled. The flag
@@ -51,13 +49,11 @@ are not required with `--no-guardrail`. It then forces Hugging Face and
 Transformers offline. Missing assets fail before sampling. Keep registry and
 Hugging Face credentials out of specs, commands, logs, and job records.
 
-The accepted 1.1 guardrail path is not fully network-independent merely because
-the model repositories are installed. Its isolated UV invocation may fetch a
-Python package such as `hf-xet`, and the current framework preset can report
+In AnomalyGenNext 1.1, guardrail initialization uses an isolated UV invocation
+that may fetch a Python package such as `hf-xet`. The framework preset can report
 `image_guardrail_enforcing=false`. In that state text screening and face
 blurring remain active, but no image-safety model can block a generated image.
-Use `--no-guardrail` when a strictly network-disabled generation smoke is
-required.
+`--no-guardrail` does not run this initialization path.
 
 Invoke the command declared in `skill_info.yaml`, for example inside the
 container:
