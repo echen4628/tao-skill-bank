@@ -44,8 +44,7 @@ the selected platform.
 
 ## Full-install scope
 
-The upstream script does not accept workflow profiles. It installs the complete
-1.1 asset set, including:
+The upstream script installs the complete 1.1 asset set, including:
 
 - native DCP trees for Cosmos3-Nano and Cosmos3-Edge;
 - a direct Transformers-format Cosmos3-Nano model for AMP grounding;
@@ -54,10 +53,8 @@ The upstream script does not accept workflow profiles. It installs the complete
 - Qwen caption-tokenizer and Edge processor cache entries; and
 - Cosmos-Guardrail1 and Qwen3Guard assets.
 
-There is no supported Nano-only, fine-tune-only, or `--no-guardrail` download
-mode. Treat it as a one-time full shared installation and report that storage
-scope before launch. A consumer may still select `--no-guardrail` at runtime;
-that flag changes generation behavior, not what the installer downloads.
+Treat it as a one-time full shared installation and report that storage scope
+before launch.
 
 ## Narrow DCP conversion fallback
 
@@ -76,8 +73,8 @@ Mount `/models` to persistent writable storage. The registered
 `Cosmos3-Nano` name resolves the official checkpoint; an already-staged
 Hugging Face checkpoint may instead be supplied as an absolute,
 container-visible path. This fallback creates only the native DCP tree needed
-by fine-tuning. It is not a profile mode and does not reconstruct or validate
-the VAE, tokenizer cache, DINOv2, C-RADIO, or other companion assets.
+by fine-tuning; it does not reconstruct or validate the VAE, tokenizer cache,
+DINOv2, C-RADIO, or other companion assets.
 
 ## Completion boundary
 

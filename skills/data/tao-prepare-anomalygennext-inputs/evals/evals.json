@@ -18,11 +18,11 @@
     "question": "A user has the pinned AnomalyGenNext 1.1 container but no shared checkpoint root. Identify the skill and explain the documented installation path, scope, credentials, and offline limitations. Do not run commands, scripts, or web searches.",
     "expected_skill": "tao-prepare-anomalygennext-inputs",
     "expected_script": null,
-    "ground_truth": "Select this skill and use /workspace/paidf-anomalygen/scripts/download_checkpoints.sh from the pinned 1.1 image as the canonical full installer with CKPT_DIR bound to durable storage. Explain that it installs both Nano and Edge plus all companion and guardrail assets, has no profile or no-guardrail download mode, needs reviewed disk scope and environment-only HF_TOKEN for gated access, and does not make guardrail-enabled generation fully network-independent.",
+    "ground_truth": "Select this skill and use /workspace/paidf-anomalygen/scripts/download_checkpoints.sh from the pinned 1.1 image as the canonical full installer with CKPT_DIR bound to durable storage. Explain that it installs both Nano and Edge plus all companion and guardrail assets, needs reviewed disk scope and environment-only HF_TOKEN for gated access, and does not make guardrail-enabled generation fully network-independent.",
     "expected_behavior": [
       "Select tao-prepare-anomalygennext-inputs",
       "Use the installer from the pinned 1.1 image rather than a host checkout or independent Hub downloads",
-      "Describe the full-install scope and absence of Nano-only or no-guardrail download switches",
+      "Describe the complete Nano, Edge, companion, and guardrail installation scope",
       "Reserve the baked Nano converter for the narrow case where the companion root is already complete but the base checkpoint is only in Hugging Face format",
       "Keep HF_TOKEN in the environment and acquisition behind launch review",
       "Distinguish checkpoint installation from guardrail runtime network independence"

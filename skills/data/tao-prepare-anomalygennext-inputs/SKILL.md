@@ -33,11 +33,10 @@ completed root read-only at the same path for AMP, fine-tuning, and generation.
 Use the script from the pinned image, not a host checkout: the image and a
 nearby source checkout can carry different installer revisions.
 
-This is a full install, not a profile-aware command. It downloads both Nano and
-Edge DCP checkpoints, the direct Nano model used by AMP, KPI backbones, the VAE,
-SAM, processor/tokenizer assets, and guardrails. It has no Nano-only or
-`--no-guardrail` switch. Review the full storage and gated-access requirements
-before launch; pass `HF_TOKEN` only through the environment after accepting the
+The full installation downloads both Nano and Edge DCP checkpoints, the direct
+Nano model used by AMP, KPI backbones, the VAE, SAM, processor/tokenizer assets,
+and guardrails. Review the full storage and gated-access requirements before
+launch; pass `HF_TOKEN` only through the environment after accepting the
 required Hugging Face licenses.
 
 Read `references/checkpoint-install.md` for the complete layout, platform
